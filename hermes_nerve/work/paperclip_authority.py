@@ -90,6 +90,24 @@ class PaperclipIssueAuthority:
         lines.extend(["", f"Run: {self.context.run_id}"])
         comment = "\n".join(lines)
 
+        # Paperclip requires agent-authored in_review transitions to carry a
+        # real review path. The Nerve handoff IS a human sign-off request, so
+        # create the confirmation interaction first (idempotent per run) and
+        # then move the issue into review.
+        try:
+            self.client.create_confirmation_interaction(
+                self.execution.task_id,
+                prompt=(
+                    f"Nerve verified this issue ({result.value}, confidence "
+                    f"{float(result.confidence or 0.0):.2f}). Confirm the handoff to review."
+                ),
+                details=comment,
+                run_id=str(self.context.run_id),
+            )
+        except PaperclipTransportError:
+            # The PATCH below re-checks state; a failed interaction create is
+            # retried by the idempotency key on the next attempt.
+            pass
         try:
             updated = self.client.request_review(
                 self.execution.task_id,

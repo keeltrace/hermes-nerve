@@ -201,6 +201,32 @@ class PaperclipClient:
             return self.get_issue(issue_id)
         return self._parse_issue_like(data)
 
+    def create_confirmation_interaction(
+        self,
+        issue_id: str,
+        *,
+        prompt: str,
+        details: str,
+        run_id: str,
+    ) -> dict[str, Any] | None:
+        """Create the review-path confirmation interaction (idempotent per run)."""
+        data = self._request(
+            "POST",
+            f"/api/issues/{issue_id}/interactions",
+            payload={
+                "kind": "request_confirmation",
+                "idempotencyKey": f"nerve-handoff:{run_id}",
+                "continuationPolicy": "none",
+                "payload": {
+                    "version": 1,
+                    "prompt": str(prompt)[:1000],
+                    "detailsMarkdown": str(details)[:20000],
+                    "allowDeclineReason": True,
+                },
+            },
+        )
+        return data if isinstance(data, dict) else None
+
     def _parse_issue_like(self, data: dict[str, Any]) -> PaperclipIssue:
         issue_data = data.get("issue") if isinstance(data.get("issue"), dict) else data
         try:
