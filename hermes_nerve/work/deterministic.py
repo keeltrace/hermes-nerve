@@ -658,6 +658,32 @@ def _evaluate_criterion(supervisor, identity: RunIdentity, criterion, *, workspa
         )
         passed = rc == 0
         reason = f"Safe deterministic command {'passed' if passed else 'failed'}: {' '.join(command)}"
+    elif "launched by paperclip" in low or "nerve detected the paperclip" in low:
+        # Nerve-operation claims are controller facts, not judge prose: the
+        # worker process either carries the Paperclip task/run env plus a
+        # durable startup binding (Paperclip launched it and Nerve bound it)
+        # or it does not. An interactive manual Hermes session has neither.
+        env_task = str(os.getenv("PAPERCLIP_TASK_ID") or "").strip()
+        env_run = str(os.getenv("PAPERCLIP_RUN_ID") or "").strip()
+        binding = supervisor.store.current_identity(identity.task_id)
+        passed = bool(
+            env_task
+            and env_task == identity.task_id
+            and binding is not None
+            and binding.contract_hash == identity.contract_hash
+        )
+        reason = (
+            "Controller observed Paperclip run context: "
+            f"PAPERCLIP_TASK_ID={env_task or '<missing>'}, PAPERCLIP_RUN_ID={'present' if env_run else '<missing>'}, "
+            f"startup binding={'present' if binding is not None else '<missing>'}."
+        )
+        supervisor.observe_evidence(
+            identity,
+            value={"paperclip_task_env": bool(env_task), "run_id_env": bool(env_run), "startup_binding": binding is not None},
+            kind="deterministic_paperclip_context", criterion_id=criterion.id,
+            source="controller_observed", tool_name="deterministic",
+            is_error=not passed,
+        )
     elif "at least" in low and "regression test" in low:
         passed, reason = _verify_regression_test_count(workspace, desc)
     elif "clean git status" in low or ("committed" in low and "clean" in low):

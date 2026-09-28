@@ -190,6 +190,17 @@ class PaperclipClient:
             return self.get_issue(issue_id)
         return self._parse_issue_like(data)
 
+    def revert_to_in_progress(self, issue_id: str, *, comment: str) -> PaperclipIssue:
+        """Controller-only: pull an unverified issue out of review."""
+        data = self._request(
+            "PATCH",
+            f"/api/issues/{issue_id}",
+            payload={"status": "in_progress", "comment": str(comment)},
+        )
+        if not isinstance(data, dict):
+            return self.get_issue(issue_id)
+        return self._parse_issue_like(data)
+
     def _parse_issue_like(self, data: dict[str, Any]) -> PaperclipIssue:
         issue_data = data.get("issue") if isinstance(data.get("issue"), dict) else data
         try:

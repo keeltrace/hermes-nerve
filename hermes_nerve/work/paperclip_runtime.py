@@ -160,6 +160,37 @@ def authority_from_store(supervisor, identity: RunIdentity) -> PaperclipIssueAut
     return PaperclipIssueAuthority(client, execution)
 
 
+def revert_unverified_review(supervisor, identity: RunIdentity, verdict: CompletionVerdict) -> bool:
+    """Move a worker-reached ``in_review`` issue back to ``in_progress``.
+
+    Session-end ran the deterministic verification and it did not allow the
+    handoff, so any review state on the issue is unverified - the worker may
+    have smuggled it through a Paperclip-native sign-off interaction, which
+    no tool-level fence can see. Paperclip stays canonical for status; this
+    is an API mutation by the controller, never state SQL.
+    """
+    authority = current_authority()
+    if authority is None:
+        authority = authority_from_store(supervisor, identity)
+    if authority is None:
+        return False
+    client = authority.client
+    issue = client.get_issue(identity.task_id)
+    if issue.status != "in_review":
+        return False
+    body = (
+        f"<!-- nerve-controller:{identity.run_id} -->\n"
+        "### Nerve Verification\n\n"
+        "Result: NOT VERIFIED\n\n"
+        f"Nerve session-end verification returned {verdict.value}; the issue was moved "
+        "back to in_progress because review requires a Nerve PASS. Missing criteria: "
+        + (", ".join(verdict.missing_criteria[:8]) or "(none listed)")
+        + ".\n"
+    )
+    client.revert_to_in_progress(identity.task_id, comment=body)
+    return True
+
+
 def request_review(
     supervisor,
     identity: RunIdentity,
@@ -181,11 +212,34 @@ def request_review(
         for row in supervisor.store.evidence(identity)
         if str(row.get("pointer") or row.get("tool_name") or row.get("kind") or "").strip()
     )
-    return authority.request_review(
+    outcome = authority.request_review(
         verdict,
         summary=summary,
         evidence=evidence[-12:],
     )
+    if outcome.remote_updated:
+        # Handoff-contingent criteria ("verification transitioned the issue",
+        # "issue contains a Nerve Verification comment") are true only after
+        # the controller-performed transition, so the controller marks them
+        # itself. A pre-handoff judge can never honestly evaluate them.
+        try:
+            for criterion in authority.execution.criteria:
+                desc_low = str(criterion.description or "").lower()
+                if (
+                    "transitioned this issue to" in desc_low
+                    or "transitioned the issue to" in desc_low
+                    or ("contains a" in desc_low and "nerve verification" in desc_low)
+                ):
+                    supervisor.mark_deterministic_verdict(
+                        identity,
+                        criterion.id,
+                        passed=True,
+                        reason="Verified controller handoff performed: issue in review with the Nerve Verification comment attached.",
+                        evidence_ids=[],
+                    )
+        except Exception:
+            pass
+    return outcome
 
 
 def clear_for_tests() -> None:

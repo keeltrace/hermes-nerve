@@ -1316,6 +1316,25 @@ def on_session_end(*, task_id: str = "", session_id: str = "", **kwargs: Any) ->
                         payload={"remote_updated": bool(outcome.remote_updated), "result": str(outcome.reason)[:600]},
                         created_at=_utc_now(),
                     )
+                else:
+                    # The DoD did not verify, so any in_review state on the issue
+                    # is unverified - including transitions the worker smuggled
+                    # through Paperclip-native sign-off interactions, which no
+                    # tool-level fence can see. Revert to in_progress so review
+                    # never starts on an unverified claim.
+                    try:
+                        reverted = paperclip_runtime.revert_unverified_review(sup, identity, verdict)
+                        sup.store.add_diagnostic(
+                            task_id=identity.task_id, run_id=identity.run_id, kind="completion_session_end_reverted_unverified_review",
+                            payload={"reverted": bool(reverted), "value": verdict.value,
+                                     "missing_criteria": list(verdict.missing_criteria)[:8]},
+                            created_at=_utc_now(),
+                        )
+                    except Exception as exc:
+                        sup.store.add_diagnostic(
+                            task_id=identity.task_id, run_id=identity.run_id, kind="completion_session_end_revert_failed",
+                            payload={"error": f"{type(exc).__name__}: {exc}"}, created_at=_utc_now(),
+                        )
             except Exception as exc:
                 sup.store.add_diagnostic(
                     task_id=identity.task_id, run_id=identity.run_id, kind="completion_session_end_failed",
