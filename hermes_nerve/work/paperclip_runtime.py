@@ -59,8 +59,28 @@ def bootstrap_paperclip_worker(
         return None
     client = client or client_from_env(context)
     issue = client.get_issue(context.task_id)
+    budget = int(token_budget or 0)
+    if budget <= 0:
+        # Match the Kanban autobinder: an unestimated budget must not become a
+        # 1-token target, or the budget observer kills healthy runs instantly.
+        try:
+            from .nerve import estimate_task_budget
+            from .runtime import settings as _runtime_settings
+            cfg = _runtime_settings()
+            budget = estimate_task_budget(
+                str(issue.description or ""),
+                0,
+                floor_tokens=int(cfg.get("default_task_budget_tokens", 70000)),
+                base_tokens=int(cfg.get("budget_estimator_base_tokens", 120000)),
+                per_criterion_tokens=int(cfg.get("budget_estimator_per_criterion_tokens", 75000)),
+                body_char_factor=float(cfg.get("budget_estimator_body_char_factor", 25.0)),
+                safety_multiplier=float(cfg.get("budget_estimator_safety_multiplier", 1.25)),
+                max_tokens=int(cfg.get("budget_estimator_max_tokens", 2000000)),
+            )
+        except Exception:
+            budget = 70000
     execution = issue_to_execution_contract(
-        issue, context, token_budget=token_budget
+        issue, context, token_budget=budget
     )
     workspace = str(
         workspace_path
