@@ -915,6 +915,26 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
             unrelated.mkdir(parents=True)
             self.assertIsNone(paths.infer_profile_home_from_path(unrelated))
 
+    def test_profile_report_home_does_not_escape_profile_scratch_sandbox(self):
+        # A real profile's cache/scratch tree is disposable temp space (test
+        # TMPDIRs live there). Inference inside it must never escape to the
+        # enclosing live profile, whose nerve/profile.json would otherwise be
+        # matched next; candidates under the sandbox root are still honored.
+        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+            live = Path(td) / "home" / ".hermes" / "profiles" / "live"
+            (live / "nerve").mkdir(parents=True)
+            (live / "nerve" / "profile.json").write_text("{}\n")
+            sandbox = live / "cache" / "scratch" / "s1"
+            bare = sandbox / "plain" / "dir"
+            bare.mkdir(parents=True)
+            self.assertIsNone(paths.infer_profile_home_from_path(bare))
+            nested = sandbox / ".hermes" / "profiles" / "brandnew"
+            nested.mkdir(parents=True)
+            self.assertEqual(paths.infer_profile_home_from_path(nested), nested)
+            self.assertIsNone(paths.infer_profile_home_from_path(bare))
+            # Above the scratch root, the live profile still infers normally.
+            self.assertEqual(paths.infer_profile_home_from_path(live), live)
+
     def test_profile_report_home_does_not_infer_nonexistent_profile(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
             ghost = Path(td) / ".hermes" / "profiles" / "ghost" / "plugins" / "hermes-nerve"

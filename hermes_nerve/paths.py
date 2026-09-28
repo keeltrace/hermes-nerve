@@ -49,19 +49,34 @@ def infer_profile_home_from_path(path: Path | None = None) -> Path | None:
         # Explicit path inference must still work without process HOME metadata.
         default_root = None
 
+    # A path under a profile's cache/scratch tree is sandboxed disposable
+    # space (tests, temp fixtures): inference must not escape it to the
+    # enclosing live profile above the scratch root. Find the deepest
+    # cache/scratch pair, if any, and never consider candidates at or above it.
+    sandbox_boundary = None
+    for i in range(len(parts) - 1, 0, -1):
+        if parts[i] == "scratch" and parts[i - 1] == "cache":
+            sandbox_boundary = i
+            break
+
     # A path may itself live inside another profile's scratch/cache tree, so
     # inspect the nearest profile candidate first. Accept a fresh profile under
     # the canonical .hermes/default root, or an alternate root only when it has
     # a concrete Nerve/profile-install marker. This keeps arbitrary
     # repo/vendor profiles/<name> directories from becoming report authority.
+    # Candidate scanning never escapes a sandbox boundary, and "nested under a
+    # profile" is evaluated only against profiles inside the same sandbox.
+    lower = 0 if sandbox_boundary is None else sandbox_boundary + 1
     for index in range(len(parts) - 2, -1, -1):
+        if index < lower:
+            break
         if parts[index] != "profiles" or index + 1 >= len(parts):
             continue
         profile_home = Path(*parts[: index + 2])
         root = Path(*parts[:index]).resolve(strict=False)
         nested_under_profile = any(
             parts[parent] == "profiles" and parent + 1 < index
-            for parent in range(index)
+            for parent in range(lower, index)
         )
         known_root = root == default_root or (root.name == ".hermes" and not nested_under_profile)
         initialized = (profile_home / "nerve" / "profile.json").is_file()
