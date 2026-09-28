@@ -369,6 +369,25 @@ class CardSupervisor:
         latest = self.store.latest_contract_verdicts(identity.task_id, identity.contract_hash)
         missing = tuple(c.criterion_id for c in projection.criteria if c.required and c.state != "VERIFIED_PASS")
 
+        # Handoff-contingent criteria ("verification transitioned this issue
+        # to in_review", "issue contains a Nerve Verification comment") are
+        # only true after the controller performs the verified handoff, so
+        # they can never block the handoff that makes them true. The
+        # controller marks them immediately after a successful handoff
+        # (paperclip_runtime.request_review).
+        def _is_handoff_contingent(description: str) -> bool:
+            low = str(description or "").lower()
+            return (
+                "transitioned this issue to" in low
+                or "transitioned the issue to" in low
+                or ("contains a" in low and "nerve verification" in low)
+            )
+
+        contingent_ids = {
+            c.criterion_id for c in projection.criteria if _is_handoff_contingent(c.description)
+        }
+        missing = tuple(cid for cid in missing if cid not in contingent_ids)
+
         # dev13: machine-verifiable facts are authoritative. A semantic model may
         # advise on criteria that have no deterministic verdict, but it may never
         # overwrite a controller-observed deterministic FAIL with prose-level PASS.
