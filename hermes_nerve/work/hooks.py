@@ -908,8 +908,11 @@ def _nerve_observe_and_act(sup, identity, *, lifecycle_state: str = "") -> dict[
             try:
                 forecast = forecast_extension(sup, identity, cfg=cfg)
             except Exception as exc:
+                # An unavailable forecast is never a handoff signal: fail
+                # open to WATCH and let the next checkpoint re-evaluate.
+                # A Jev outage must not yank a healthy run to review.
                 forecast = {
-                    "value": "MAYBE", "confidence": 0.0,
+                    "value": "WATCH", "confidence": 0.0,
                     "reason": f"forecast unavailable: {type(exc).__name__}: {exc}",
                     "created_at": utc_now(),
                 }
