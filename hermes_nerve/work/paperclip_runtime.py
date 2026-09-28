@@ -92,8 +92,44 @@ def current_authority() -> PaperclipIssueAuthority | None:
 
 
 def owns(identity: RunIdentity | None) -> bool:
+    if identity is None:
+        return False
     current = current_identity()
-    return bool(identity is not None and current == identity)
+    if current is None:
+        # Hook-delivery contexts lose the bootstrap ContextVar; fall back to
+        # the durable startup binding for the worker's own task env.
+        env_task = str(os.getenv("PAPERCLIP_TASK_ID") or "").strip()
+        if env_task and env_task == identity.task_id:
+            try:
+                from .runtime import supervisor as _supervisor
+                current = _supervisor().store.current_identity(env_task)
+            except Exception:
+                current = None
+    return bool(current == identity)
+
+
+def authority_from_store(supervisor, identity: RunIdentity) -> PaperclipIssueAuthority | None:
+    """Rebuild the Paperclip authority from env + the durable startup binding.
+
+    Hook callbacks run in Hermes-delivered contexts where the startup
+    bootstrap ContextVar is invisible. The worker's own PAPERCLIP_* env plus
+    the run_bindings row are sufficient to reconstruct it safely.
+    """
+    context = PaperclipRunContext(
+        company_id=str(os.getenv("PAPERCLIP_COMPANY_ID") or ""),
+        task_id=identity.task_id,
+        run_id=str(os.getenv("PAPERCLIP_RUN_ID") or identity.run_id),
+        agent_id=str(os.getenv("PAPERCLIP_AGENT_ID") or identity.worker_id or ""),
+        api_url=os.getenv("PAPERCLIP_API_URL") or None,
+        role=str(os.getenv("PAPERCLIP_AGENT_ROLE") or "builder"),
+    )
+    client = client_from_env(context)
+    try:
+        issue = client.get_issue(identity.task_id)
+        execution = issue_to_execution_contract(issue, context)
+    except Exception:
+        return None
+    return PaperclipIssueAuthority(client, execution)
 
 
 def request_review(
@@ -103,9 +139,13 @@ def request_review(
     *,
     summary: str = "",
 ) -> HandoffResult:
-    if not owns(identity):
-        return HandoffResult(bool(verdict.allow), False, "Paperclip run is not active")
     authority = current_authority()
+    if authority is None:
+        # Hook-delivery contexts lose the bootstrap ContextVar; rebuild the
+        # authority from the worker env + the durable startup binding.
+        env_task = str(os.getenv("PAPERCLIP_TASK_ID") or "").strip()
+        if env_task and env_task == identity.task_id:
+            authority = authority_from_store(supervisor, identity)
     if authority is None:
         return HandoffResult(bool(verdict.allow), False, "Paperclip authority unavailable")
     evidence = tuple(

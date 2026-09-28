@@ -132,6 +132,16 @@ class PaperclipSelfTransitionFenceTests(unittest.TestCase):
         )
         self.assertIsNone(decision)
 
+    def test_identity_resolves_from_env_in_hook_context(self):
+        """Hook-delivery contexts lose the ContextVar; env + store must suffice."""
+        paperclip_runtime.clear_for_tests()
+        self.addCleanup(paperclip_runtime.clear_for_tests)
+        with patch.dict("os.environ", {"PAPERCLIP_TASK_ID": self.identity.task_id}):
+            resolved = hooks._identity(self.identity.task_id)
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.task_id, self.identity.task_id)
+        self.assertEqual(resolved.contract_hash, self.identity.contract_hash)
+
     def test_session_end_hands_off_verified_paperclip_run(self):
         """Session-end reconciliation performs the Nerve-owned handoff."""
         authority = FakeAuthority(updated=True)

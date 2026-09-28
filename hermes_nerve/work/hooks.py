@@ -348,6 +348,10 @@ def _owns_kanban_terminal_authority() -> bool:
         return True
 
 
+def _paperclip_env_task() -> str:
+    return str(os.getenv("PAPERCLIP_TASK_ID") or "").strip()
+
+
 def _identity(task_id: str | None = None, *, session_id: str = ""):
     identity = runtime_identity_from_env(task_id or os.getenv("HERMES_KANBAN_TASK") or None)
     if identity is not None:
@@ -359,6 +363,18 @@ def _identity(task_id: str | None = None, *, session_id: str = ""):
         identity = None
     if identity is not None:
         return identity
+    # Paperclip workers carry PAPERCLIP_* env, but hook callbacks run in
+    # Hermes-delivered contexts where the startup bootstrap ContextVar is not
+    # visible and the Kanban env is absent. Resolve the durable startup
+    # binding from the store so supervision hooks still bind the run.
+    env_task = _paperclip_env_task()
+    if enabled() and env_task:
+        try:
+            identity = supervisor().store.current_identity(env_task)
+        except Exception:
+            identity = None
+        if identity is not None:
+            return identity
     if not enabled():
         return None
     try:
