@@ -151,6 +151,26 @@ def _worker_completion_intent(tool_name: str, args: dict[str, Any] | None) -> bo
     return "hermes kanban" in blob and " complete " in f" {blob} "
 
 
+def _paperclip_completion_intent(tool_name: str, args: dict[str, Any] | None) -> bool:
+    """Recognize attempts by a Paperclip worker to transition its own issue.
+
+    The Kanban completion fence cannot see these: a ``hermes_local`` worker
+    mutates the issue through Paperclip's HTTP API (curl or the paperclip
+    client), so no Kanban tool name or marker appears in the call. For runs
+    Nerve supervises, the verified transition belongs to the controller, not
+    to the worker.
+    """
+    name = str(tool_name or "")
+    if name not in {"terminal", "execute_code", "process"}:
+        return False
+    blob = _serialized_args(args)
+    if "/api/issues/" in blob and "in_review" in blob:
+        return True
+    if "request_review(" in blob and "paperclipclient" in blob.lower():
+        return True
+    return False
+
+
 def _native_completion_args(sup, identity, proposal: dict[str, Any], verdict) -> dict[str, Any]:
     # dev13: when deterministic authority proved the locked DoD, the terminal
     # summary is synthesized from controller-observed verdicts rather than trusting
@@ -503,6 +523,87 @@ def pre_tool_call(tool_name: str, args: dict, task_id: str | None = None, sessio
             }
     except Exception:
         pass
+
+    # Paperclip workers reach their issue through the HTTP API (curl, the
+    # paperclip client, CLI wrappers), not through Kanban tools, so the Kanban
+    # completion fence never sees the transition. A controller-supervised
+    # Paperclip run may not transition itself: intercept the completion intent
+    # and replace it with controller verification + the authoritative
+    # request_review handoff, mirroring the Kanban completion-intent path.
+    paperclip_completion = False
+    try:
+        from . import paperclip_runtime as _pc_runtime
+        if _pc_runtime.owns(identity) and _paperclip_completion_intent(name, args or {}):
+            paperclip_completion = True
+    except Exception:
+        paperclip_completion = False
+
+    if paperclip_completion and tool_dispatcher_available():
+        try:
+            verdict = sup.verify_completion(
+                identity,
+                proposal={
+                    "summary": (args or {}).get("summary"),
+                    "result": (args or {}).get("result"),
+                    "trigger": "paperclip_completion_intent",
+                    "tool_name": name,
+                },
+            )
+        except Exception as exc:
+            return {
+                "action": "block",
+                "message": f"Nerve controller could not verify completion: {type(exc).__name__}: {exc}",
+                "rule_key": "nerve:paperclip-completion-error",
+            }
+        if verdict.allow:
+            try:
+                from . import paperclip_runtime
+                outcome = paperclip_runtime.request_review(
+                    sup,
+                    identity,
+                    verdict,
+                    summary=str(verdict.reason),
+                )
+            except Exception as exc:
+                return {
+                    "action": "block",
+                    "message": f"Nerve verified completion but the Paperclip review handoff failed: {type(exc).__name__}: {exc}",
+                    "rule_key": "nerve:paperclip-handoff-error",
+                }
+            if outcome.remote_updated:
+                return {
+                    "action": "block",
+                    "message": (
+                        "Nerve verified the locked Definition of Done and handed the issue to review. "
+                        "No further worker action is required."
+                    ),
+                    "rule_key": "nerve:paperclip-controller-completion",
+                }
+            return {
+                "action": "block",
+                "message": (
+                    "Nerve verified completion locally, but the Paperclip review handoff is pending: "
+                    + outcome.reason
+                ),
+                "rule_key": "nerve:paperclip-review-pending",
+            }
+        missing = f" Missing: {', '.join(verdict.missing_criteria)}" if verdict.missing_criteria else ""
+        return {
+            "action": "block",
+            "message": verdict.reason + missing,
+            "rule_key": "nerve:paperclip-completion",
+        }
+    if paperclip_completion:
+        # No dispatcher available: fail closed rather than letting an
+        # unsupervised transition through, and preserve the verified latch.
+        return {
+            "action": "block",
+            "message": (
+                "This Paperclip run is Nerve-supervised; issue transitions are controller-owned. "
+                "Nerve will request review after verified completion."
+            ),
+            "rule_key": "nerve:paperclip-lifecycle",
+        }
 
     # A controller-owned dispatch re-enters Hermes' normal tool pipeline. Let
     # that exact recursive kanban_complete invocation through; all model-originated
@@ -1137,6 +1238,50 @@ def on_session_end(*, task_id: str = "", session_id: str = "", **kwargs: Any) ->
         control = sup.control_for_run(identity)
     except Exception:
         control = None
+
+    # Paperclip owns its issue lifecycle through its API; controller completion
+    # is the verified request_review handoff, never the Kanban native dispatch.
+    from .models import utc_now as _utc_now
+    try:
+        from . import paperclip_runtime
+        if paperclip_runtime.owns(identity):
+            if control and str(control.get("control") or "") == _TERMINAL_READY_CONTROL and _terminal_state(control) == "COMPLETED":
+                return
+            if not paperclip_runtime.current_authority():
+                return
+            try:
+                verdict = sup.verify_completion(identity, proposal={"session_end": True, "session_id": session_id})
+                sup.store.add_diagnostic(
+                    task_id=identity.task_id, run_id=identity.run_id, kind="completion_session_end",
+                    payload={
+                        "allow": bool(verdict.allow), "value": verdict.value,
+                        "confidence": verdict.confidence, "missing_criteria": list(verdict.missing_criteria),
+                        "receipt_id": verdict.receipt_id, "authority": "paperclip",
+                    },
+                    created_at=_utc_now(),
+                )
+                if verdict.allow:
+                    outcome = paperclip_runtime.request_review(
+                        sup,
+                        identity,
+                        verdict,
+                        summary=str(verdict.reason),
+                    )
+                    sup.store.add_diagnostic(
+                        task_id=identity.task_id, run_id=identity.run_id, kind="completion_session_end_handoff",
+                        payload={"remote_updated": bool(outcome.remote_updated), "result": str(outcome.reason)[:600]},
+                        created_at=_utc_now(),
+                    )
+            except Exception as exc:
+                sup.store.add_diagnostic(
+                    task_id=identity.task_id, run_id=identity.run_id, kind="completion_session_end_failed",
+                    payload={"error": f"{type(exc).__name__}: {exc}", "authority": "paperclip"}, created_at=_utc_now(),
+                )
+            return
+
+    except Exception:
+        pass
+
 
     # A verified run is never handed back to the model. Session-end simply
     # reconciles a deferred native transition (or records that it already closed).
