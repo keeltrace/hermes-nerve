@@ -142,6 +142,49 @@ class PaperclipSelfTransitionFenceTests(unittest.TestCase):
         self.assertEqual(resolved.task_id, self.identity.task_id)
         self.assertEqual(resolved.contract_hash, self.identity.contract_hash)
 
+    def test_jq_variable_patch_shape_is_fenced(self):
+        """The jq --arg PATCH shape (status literal only in the jq program) is fenced."""
+        self._write_passing_tests()
+        authority = FakeAuthority(updated=True)
+        command = (
+            'api="${PAPERCLIP_API_URL%/api}"; case "$api" in */api) ;; *) api="$api/api" ;; esac; '
+            "body=$(cat <<'MD'\n### Nerve Verification\n\nResult: PASS\nMD\n); "
+            "jq -n --arg status in_review --arg comment \"$body\" '{status:$status, comment:$comment}' | "
+            'curl -sS -X PATCH "$api/issues/issue-e2e" -H "Content-Type: application/json" --data-binary @-'
+        )
+        with self._patch_authority(authority):
+            decision = hooks.pre_tool_call(
+                "terminal",
+                {"command": command},
+                task_id="issue-e2e",
+                session_id="session-e2e",
+            )
+        self.assertEqual(decision["action"], "block")
+        self.assertIn("Nerve verified", decision["message"])
+
+    def test_session_end_rebuilds_authority_in_hook_context(self):
+        """No bootstrap ContextVar: env + store must still produce the handoff."""
+        paperclip_runtime.clear_for_tests()
+        self.addCleanup(paperclip_runtime.clear_for_tests)
+        self._write_passing_tests()
+        with patch.dict(
+            "os.environ",
+            {
+                "PAPERCLIP_TASK_ID": self.identity.task_id,
+                "PAPERCLIP_RUN_ID": str(self.identity.run_id),
+                "PAPERCLIP_COMPANY_ID": "company-1",
+                "PAPERCLIP_AGENT_ID": "builder-1",
+                "PAPERCLIP_API_URL": "http://paperclip.test",
+            },
+        ):
+            hooks.on_session_end(task_id=self.identity.task_id, session_id="session-e2e")
+        store = self.supervisor.store
+        diag = store.latest_diagnostic(task_id=self.identity.task_id, kind="completion_session_end_skipped")
+        self.assertIsNone(
+            diag,
+            "session-end must not silently skip when the authority is rebuildable from env",
+        )
+
     def test_session_end_hands_off_verified_paperclip_run(self):
         """Session-end reconciliation performs the Nerve-owned handoff."""
         authority = FakeAuthority(updated=True)

@@ -168,6 +168,15 @@ def _paperclip_completion_intent(tool_name: str, args: dict[str, Any] | None) ->
         return True
     if "request_review(" in blob and "paperclipclient" in blob.lower():
         return True
+    # jq-variable PATCH shape: the status literal only appears as a jq
+    # --arg, with the curl carrying "$api/issues/<id>".
+    lowered = blob.lower()
+    if (
+        ("--arg status in_review" in lowered or "'{status:$status" in lowered)
+        and ("/api/issues/" in blob or "issues/" in blob)
+        and ("curl" in lowered or "patch" in lowered)
+    ):
+        return True
     return False
 
 
@@ -1267,7 +1276,23 @@ def on_session_end(*, task_id: str = "", session_id: str = "", **kwargs: Any) ->
             if control and str(control.get("control") or "") == _TERMINAL_READY_CONTROL and _terminal_state(control) == "COMPLETED":
                 return
             if not paperclip_runtime.current_authority():
-                return
+                # Hook-delivery context: rebuild the authority from the worker
+                # env + the durable startup binding. Without this the session
+                # ended with a silently unverified run whenever a worker found
+                # an unverified transition path (live: KEE-7 sign-off
+                # interaction reached in_review with an unverified PASS).
+                from .models import RunIdentity as _RunIdentity
+                full_identity = sup.store.current_identity(identity.task_id) or identity
+                rebuilt = paperclip_runtime.authority_from_store(sup, full_identity)
+                if rebuilt is None:
+                    sup.store.add_diagnostic(
+                        task_id=identity.task_id, run_id=identity.run_id, kind="completion_session_end_skipped",
+                        payload={"reason": "paperclip authority unavailable in hook context", "authority": "paperclip"},
+                        created_at=_utc_now(),
+                    )
+                    return
+                paperclip_runtime._ACTIVE.set((full_identity, rebuilt))
+                identity = full_identity
             try:
                 verdict = sup.verify_completion(identity, proposal={"session_end": True, "session_id": session_id})
                 sup.store.add_diagnostic(

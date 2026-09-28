@@ -117,7 +117,9 @@ def owns(identity: RunIdentity | None) -> bool:
     current = current_identity()
     if current is None:
         # Hook-delivery contexts lose the bootstrap ContextVar; fall back to
-        # the durable startup binding for the worker's own task env.
+        # the durable startup binding for the worker's own task env. Compare
+        # identity keys only: a reconstructed identity has no claim_identity,
+        # and dataclass equality would silently fail the match.
         env_task = str(os.getenv("PAPERCLIP_TASK_ID") or "").strip()
         if env_task and env_task == identity.task_id:
             try:
@@ -125,7 +127,13 @@ def owns(identity: RunIdentity | None) -> bool:
                 current = _supervisor().store.current_identity(env_task)
             except Exception:
                 current = None
-    return bool(current == identity)
+    if current is None or identity is None:
+        return False
+    return (
+        current.task_id == identity.task_id
+        and int(current.run_id) == int(identity.run_id)
+        and current.contract_hash == identity.contract_hash
+    )
 
 
 def authority_from_store(supervisor, identity: RunIdentity) -> PaperclipIssueAuthority | None:
