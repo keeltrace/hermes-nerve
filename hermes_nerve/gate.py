@@ -19,7 +19,7 @@ from typing import Any, Callable
 from .engine import DecisionEngine, DecisionResult
 from .paths import hermes_home
 from .jsonl import append_jsonl, read_jsonl
-from .privacy import redact
+from .privacy import canonical_hash, redact
 
 _SKIP_PREFIXES = ("nerve_", "jev_")
 _DEFAULT_READ_ONLY_TOOLS = frozenset({
@@ -128,6 +128,12 @@ def _probability_of(probabilities: Any, choice: str) -> float | None:
     if not math.isfinite(number) or not 0.0 <= number <= 1.0:
         return None
     return number
+
+
+def _block_approval_rule_key(tool_name: str, args: dict[str, Any]) -> str:
+    """Stable, non-sensitive approval grain for one blocked tool action."""
+    fingerprint = canonical_hash({"tool_name": str(tool_name), "arguments": redact(args)})[:16]
+    return f"nerve:block-escalated:{tool_name}:{fingerprint}"
 
 
 def gate_event_path() -> Path:
@@ -350,7 +356,7 @@ def pre_tool_call(tool_name: str, args: dict, task_id: str | None = None, **kwar
             return {
                 "action": "approve",
                 "message": f"Nerve verdict is BLOCK ({result.confidence:.3f} confidence); human approval required (ask-only mode).",
-                "rule_key": "nerve:block-escalated",
+                "rule_key": _block_approval_rule_key(tool_name, args),
             }
         return {
             "action": "block",

@@ -575,7 +575,7 @@ class GateTests(unittest.TestCase):
             finally:
                 gate.evaluate_tool_call = original
             self.assertEqual(decision["action"], "approve")
-            self.assertEqual(decision["rule_key"], "nerve:block-escalated")
+            self.assertTrue(decision["rule_key"].startswith("nerve:block-escalated:terminal:"))
 
     def test_ask_only_enforce_paths_still_gate_allow(self):
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
@@ -590,6 +590,16 @@ class GateTests(unittest.TestCase):
             self.assertEqual(gated["action"], "approve")
             self.assertEqual(gated["rule_key"], "nerve:low-allow-probability")
             self.assertIsNone(passed)
+
+    def test_ask_only_block_approval_key_is_action_specific_and_stable(self):
+        first = gate._block_approval_rule_key("terminal", {"command": "rm -rf /tmp/a"})
+        same = gate._block_approval_rule_key("terminal", {"command": "rm -rf /tmp/a"})
+        other = gate._block_approval_rule_key("terminal", {"command": "rm -rf /tmp/b"})
+        other_tool = gate._block_approval_rule_key("write_file", {"path": "/tmp/a"})
+        self.assertEqual(first, same)
+        self.assertNotEqual(first, other)
+        self.assertNotEqual(first, other_tool)
+        self.assertNotIn("rm -rf", first)
 
     def test_ask_only_provider_failure_fails_to_human(self):
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
