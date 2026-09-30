@@ -1,6 +1,7 @@
 """Fail-open Laya shadowing around the current authoritative Jev provider."""
 from __future__ import annotations
 
+import contextvars
 import threading
 from pathlib import Path
 from typing import Any
@@ -46,9 +47,23 @@ class ShadowProvider:
     def system_one(self, *, state: Any, questions: dict[str, dict[str, Any]], model: str | None = None):
         primary_response = self.primary.system_one(state=state, questions=questions, model=model)
         if self.asynchronous:
+            # Capture the caller's context and run the shadow under it so
+            # profile-scoped secrets (Hermes ContextVars) survive the thread
+            # hop (#35). Captured per call: each shadow runs under the scope
+            # of the turn that spawned it.
+            task_ctx = contextvars.copy_context()
+
+            def _shadow_under_ctx() -> None:
+                task_ctx.run(
+                    self._run_shadow,
+                    state=state,
+                    questions=questions,
+                    model=model,
+                    primary_response=primary_response,
+                )
+
             thread = threading.Thread(
-                target=self._run_shadow,
-                kwargs={"state": state, "questions": questions, "model": model, "primary_response": primary_response},
+                target=_shadow_under_ctx,
                 name="hermes-reflex-laya-shadow",
                 daemon=True,
             )

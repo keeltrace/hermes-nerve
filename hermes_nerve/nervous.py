@@ -14,6 +14,7 @@ action from running indefinitely even if remote supervision arrives late.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import queue
@@ -32,6 +33,17 @@ from .outcomes import HistoricalOutcomeModel, OutcomeStore
 from .paths import hermes_home
 from .privacy import canonical_hash, redact
 from .provenance import execution_provenance
+from .progress_integrity import (
+    change_required as progress_change_required,
+    changed_paths_relevant,
+    environment_action,
+    environment_failure,
+    mutation_is_relevant,
+    requested_paths as progress_requested_paths,
+    test_succeeded,
+    tool_kind,
+    verification_required as progress_verification_required,
+)
 from .router import (
     assess_event,
     decision_state_fingerprint,
@@ -44,6 +56,35 @@ ADMISSION_CHOICES = ["OFF", "WATCH", "ON"]
 CONTROL_CHOICES = ["CONTINUE", "GATHER_EVIDENCE", "RETRY", "REPLAN", "ESCALATE"]
 SUPERVISION_MODES = {"shadow", "correct_next", "precommit"}
 BLOCKING_CONTROLS = {"GATHER_EVIDENCE", "REPLAN", "ESCALATE"}
+
+_TRANSIENT_FAILURE_MARKERS = (
+    "timeout", "timed out", "connection reset", "connection refused", "connection failed",
+    "temporarily unavailable", "temporary failure", "rate limit", "too many requests",
+    "service unavailable", "resource busy", "database is locked",
+)
+_DETERMINISTIC_FAILURE_MARKERS = (
+    "blocked:", "not allowed", "permission denied", "operation not permitted", "access denied",
+    "approval required", "requires approval", "not authorized", "unauthorized",
+    "invalid argument", "invalid option", "unrecognized argument", "unknown option",
+    "missing required", "validation error", "schema validation", "file not found",
+    "no such file or directory", "does not exist", "read-only file system",
+)
+_PROGRESS_CHALLENGE_AFTER = 12
+_PROGRESS_BLOCK_AFTER = 16
+
+
+def _deterministic_failure_reason(status: str, result: str, error_message: str) -> str:
+    """Return a stable reason when retrying the exact action cannot fix the failure."""
+    normalized_status = str(status or "").strip().lower()
+    text = " ".join((str(result or ""), str(error_message or ""))).lower()
+    if normalized_status == "blocked":
+        return "blocked-status"
+    if any(marker in text for marker in _TRANSIENT_FAILURE_MARKERS):
+        return ""
+    for marker in _DETERMINISTIC_FAILURE_MARKERS:
+        if marker in text:
+            return marker
+    return ""
 
 
 @dataclass
@@ -167,6 +208,15 @@ class TurnState:
     pending_batch: deque = field(default_factory=lambda: deque(maxlen=64))
     failure_episodes: dict[str, FailureEpisode] = field(default_factory=dict)
     active_control: ControlDirective | None = None
+    change_required: bool = False
+    verification_required: bool = False
+    requested_paths: tuple[str, ...] = ()
+    tool_actions: int = 0
+    mutation_attempts: int = 0
+    relevant_mutation_attempts: int = 0
+    verified_test_passes: int = 0
+    progress_challenge_issued: bool = False
+    environment_failure_actions: deque = field(default_factory=lambda: deque(maxlen=8))
 
 
 class NervousSystem:
@@ -176,7 +226,7 @@ class NervousSystem:
         self._lock = threading.RLock()
         self._turns: dict[str, TurnState] = {}
         self._session_turn: dict[str, str] = {}
-        self._tasks: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
+        self._tasks: queue.Queue[tuple[str, dict[str, Any], contextvars.Context]] = queue.Queue()
         self._worker: threading.Thread | None = None
         self._stopping = False
         self._metrics: Counter[str] = Counter()
@@ -256,17 +306,25 @@ class NervousSystem:
             if self._worker is worker and (worker is None or not worker.is_alive()):
                 self._worker = None
 
+    def _dispatch_task(self, kind: str, payload: dict[str, Any]) -> None:
+        if kind == "admit":
+            self._do_admission(payload)
+        elif kind == "assess":
+            self._do_assessment(payload)
+
     def _run(self) -> None:
         while not self._stopping:
             try:
-                kind, payload = self._tasks.get(timeout=0.25)
+                kind, payload, task_ctx = self._tasks.get(timeout=0.25)
             except queue.Empty:
                 continue
             try:
-                if kind == "admit":
-                    self._do_admission(payload)
-                elif kind == "assess":
-                    self._do_assessment(payload)
+                # Run under the caller's captured context so profile-scoped
+                # secrets (Hermes ContextVars) survive the thread hop (#35).
+                # Captured per task, NOT per worker: one worker serves many
+                # profiles, so a worker-lifetime capture would run later
+                # profiles under the first profile's scope.
+                task_ctx.run(self._dispatch_task, kind, payload)
             except Exception as exc:  # background supervision must never crash Hermes
                 self._metrics["worker_errors"] += 1
                 self._log("worker_error", {"kind": kind, "error": str(exc)[:500]})
@@ -311,6 +369,9 @@ class NervousSystem:
                 user_message_hash=canonical_hash(user_message),
                 recent_events=deque(maxlen=self._config.retain_recent_events),
                 pending_batch=deque(maxlen=self._config.retain_recent_events),
+                change_required=progress_change_required(user_message),
+                verification_required=progress_verification_required(user_message),
+                requested_paths=progress_requested_paths(user_message),
             )
             self._turns[tid] = state
             if session_id:
@@ -318,7 +379,7 @@ class NervousSystem:
             self._metrics["turns_started"] += 1
         self._log("turn_start", {"turn_id": tid, "session_id": session_id, "prompt_sha256": state.user_message_hash})
         if self._config.admission_enabled:
-            self._tasks.put(("admit", {"turn_id": tid, "user_message": user_message}))
+            self._tasks.put(("admit", {"turn_id": tid, "user_message": user_message}, contextvars.copy_context()))
         else:
             with self._lock:
                 state.admission = "ON"
@@ -429,7 +490,17 @@ class NervousSystem:
         self._recent_controls.append(directive.as_dict())
         self._record_control_lifecycle(state, directive, stage="created", disposition="active")
 
-    def _activate_local_loop_breaker(self, state: TurnState, episode: FailureEpisode) -> None:
+    def _activate_local_replan(
+        self,
+        state: TurnState,
+        episode: FailureEpisode,
+        *,
+        source: str,
+        reason: str,
+        decision_type: str,
+        challenge_reason: str,
+        metric: str,
+    ) -> None:
         if state.active_control and state.active_control.failure_fingerprint == episode.fingerprint:
             return
         decision_id = f"local-{uuid.uuid4().hex}"
@@ -438,8 +509,8 @@ class NervousSystem:
             event_id=episode.last_event_id,
             control="REPLAN",
             confidence=1.0,
-            source="local-loop-breaker",
-            reason=f"identical failure repeated {episode.count} times",
+            source=source,
+            reason=reason,
             created_at=self._now(),
             failure_fingerprint=episode.fingerprint,
             action_fingerprint=episode.action_fingerprint,
@@ -447,21 +518,22 @@ class NervousSystem:
         )
         episode.last_control = "REPLAN"
         episode.last_decision_id = decision_id
-        self._metrics["local_loop_breakers"] += 1
+        self._metrics[metric] += 1
         self._metrics["control_replan"] += 1
         self._outcomes.append({
             "record_type": "decision",
             "decision_id": decision_id,
             "turn_id": state.turn_id,
             "event_id": episode.last_event_id,
-            "decision_type": "REPEATED_FAILURE",
+            "decision_type": decision_type,
             "hermes_decision": "RETRY_SAME_ACTION",
             "jev_decision": "REPLAN",
             "agreement": False,
             "jev_confidence": 1.0,
             "jev_probabilities": {"REPLAN": 1.0},
             "challenge_issued": True,
-            "source": "local-loop-breaker",
+            "source": source,
+            "reason": reason,
             "failure_fingerprint": episode.fingerprint,
             "failure_repeat_count": episode.count,
             "stale": False,
@@ -478,14 +550,104 @@ class NervousSystem:
             jev_decision="REPLAN",
             confidence=1.0,
             probabilities={"REPLAN": 1.0},
-            reason="local-repeated-failure-loop-breaker",
+            reason=challenge_reason,
             created_at=self._now(),
         )
         state.pending_challenges.append(challenge)
         state.challenge_count += 1
         self._metrics["challenges_created"] += 1
         self._recent_challenges.append(challenge.as_dict())
-        self._log("local_loop_breaker", {**directive.as_dict(), "repeat_count": episode.count})
+        self._log(source.replace("-", "_"), {**directive.as_dict(), "repeat_count": episode.count})
+
+    def _activate_progress_stall_replan(self, state: TurnState, event_id: str) -> None:
+        if state.progress_challenge_issued or state.relevant_mutation_attempts:
+            return
+        decision_id = f"local-{uuid.uuid4().hex}"
+        reason = f"local-progress-stall:{state.tool_actions}-actions-without-relevant-mutation"
+        directive = ControlDirective(
+            decision_id=decision_id,
+            event_id=event_id,
+            control="REPLAN",
+            confidence=1.0,
+            source="local-progress-stall",
+            reason="implementation task exceeded investigation budget without task-relative progress",
+            created_at=self._now(),
+        )
+        challenge = Challenge(
+            challenge_id=uuid.uuid4().hex,
+            decision_id=decision_id,
+            turn_id=state.turn_id,
+            event_id=event_id,
+            state_version=state.last_state_version,
+            decision_version=decision_id,
+            hermes_decision="CONTINUE_INVESTIGATION",
+            jev_decision="REPLAN",
+            confidence=1.0,
+            probabilities={"REPLAN": 1.0},
+            reason=reason,
+            created_at=self._now(),
+        )
+        self._activate_control(state, directive)
+        state.progress_challenge_issued = True
+        state.pending_challenges.append(challenge)
+        state.challenge_count += 1
+        self._metrics["progress_stall_replans"] += 1
+        self._metrics["challenges_created"] += 1
+        self._recent_challenges.append(challenge.as_dict())
+        self._log("progress_stall_replan", {
+            "turn_id": state.turn_id,
+            "session_id": state.session_id,
+            "tool_actions": state.tool_actions,
+            "mutation_attempts": state.mutation_attempts,
+            "relevant_mutation_attempts": state.relevant_mutation_attempts,
+            "requested_paths": list(state.requested_paths),
+            "decision_id": decision_id,
+        })
+
+    def _activate_environment_thrash_replan(self, state: TurnState, event_id: str) -> None:
+        decision_id = f"local-{uuid.uuid4().hex}"
+        directive = ControlDirective(
+            decision_id=decision_id,
+            event_id=event_id,
+            control="REPLAN",
+            confidence=1.0,
+            source="local-environment-thrash",
+            reason="repeated environment/toolchain setup failures require repository-native recovery",
+            created_at=self._now(),
+        )
+        self._activate_control(state, directive)
+        self._metrics["environment_thrash_replans"] += 1
+        self._metrics["control_replan"] += 1
+        self._log("environment_thrash_replan", {
+            "turn_id": state.turn_id,
+            "session_id": state.session_id,
+            "failure_actions": list(state.environment_failure_actions),
+            "decision_id": decision_id,
+        })
+
+    def _activate_local_loop_breaker(self, state: TurnState, episode: FailureEpisode) -> None:
+        self._activate_local_replan(
+            state,
+            episode,
+            source="local-loop-breaker",
+            reason=f"identical failure repeated {episode.count} times",
+            decision_type="REPEATED_FAILURE",
+            challenge_reason="local-repeated-failure-loop-breaker",
+            metric="local_loop_breakers",
+        )
+
+    def _activate_deterministic_failure_replan(
+        self, state: TurnState, episode: FailureEpisode, deterministic_reason: str
+    ) -> None:
+        self._activate_local_replan(
+            state,
+            episode,
+            source="local-deterministic-failure",
+            reason=f"exact retry cannot fix deterministic failure: {deterministic_reason}",
+            decision_type="DETERMINISTIC_FAILURE",
+            challenge_reason=f"local-deterministic-failure:{deterministic_reason}",
+            metric="deterministic_failure_replans",
+        )
 
     def emit_event(self, event: dict[str, Any]) -> dict[str, Any]:
         if not self._config.enabled:
@@ -623,7 +785,7 @@ class NervousSystem:
                 if episode:
                     episode.provider_evaluations += 1
 
-        self._tasks.put(("assess", {"turn_id": state.turn_id, "event": clean, "router": route.as_dict()}))
+        self._tasks.put(("assess", {"turn_id": state.turn_id, "event": clean, "router": route.as_dict()}, contextvars.copy_context()))
         return {"accepted": True, "forwarded": True, "admission": admission, "router": route.as_dict()}
 
     def observe_tool_call(self, **kwargs: Any) -> dict[str, Any]:
@@ -663,7 +825,38 @@ class NervousSystem:
         action_fp = tool_action_fingerprint(tool_name, args)
         fail_fp = ""
         repeat_count = 0
+        deterministic_reason = _deterministic_failure_reason(status, result, error_message) if is_failure else ""
+        env_failure = environment_failure(tool_name, args, status, result, error_message)
         state = self._resolve_turn(turn_id=str(kwargs.get("turn_id") or ""), session_id=str(kwargs.get("session_id") or ""))
+        if state is not None:
+            with self._lock:
+                state.tool_actions += 1
+                kind = tool_kind(tool_name, args)
+                if kind == "mutation":
+                    state.mutation_attempts += 1
+                    if mutation_is_relevant(tool_name, args, state.requested_paths):
+                        state.relevant_mutation_attempts += 1
+                elif kind == "test" and test_succeeded(status, result, error_message):
+                    state.verified_test_passes += 1
+                if (
+                    state.change_required
+                    and state.relevant_mutation_attempts == 0
+                    and state.tool_actions >= _PROGRESS_CHALLENGE_AFTER
+                    and not state.progress_challenge_issued
+                ):
+                    self._activate_progress_stall_replan(state, event_id)
+                if (
+                    not is_failure
+                    and state.active_control is not None
+                    and state.active_control.source == "local-environment-thrash"
+                    and not environment_action(tool_name, args)
+                ):
+                    self._metrics["controls_followed"] += 1
+                    self._record_control_lifecycle(
+                        state, state.active_control, stage="next_action", disposition="followed",
+                        proposed_action_fingerprint=action_fp,
+                    )
+                    state.active_control = None
         if is_failure and state is not None:
             exit_code = kwargs.get("exit_code", kwargs.get("returncode"))
             fail_fp = failure_fingerprint(
@@ -689,8 +882,15 @@ class NervousSystem:
                 repeat_count = episode.count
                 if repeat_count >= 2:
                     self._metrics["repeated_failures_seen"] += 1
-                if repeat_count >= self._config.repeated_failure_local_replan_at:
+                if deterministic_reason and repeat_count == 1:
+                    self._activate_deterministic_failure_replan(state, episode, deterministic_reason)
+                elif repeat_count >= self._config.repeated_failure_local_replan_at:
                     self._activate_local_loop_breaker(state, episode)
+                if env_failure and action_fp not in state.environment_failure_actions:
+                    state.environment_failure_actions.append(action_fp)
+                    self._metrics["environment_toolchain_failures"] += 1
+                    if len(state.environment_failure_actions) >= 2:
+                        self._activate_environment_thrash_replan(state, event_id)
             if repeat_count >= 2:
                 event_type = "REPEATED_FAILURE"
 
@@ -711,6 +911,8 @@ class NervousSystem:
             "uncertainty": 0.65 if is_failure else 0.15,
             "contradiction": contradiction,
             "repeated_failure": repeat_count >= 2,
+            "deterministic_failure": bool(deterministic_reason),
+            "deterministic_failure_reason": deterministic_reason,
             "failure_repeat_count": repeat_count,
             "failure_fingerprint": fail_fp,
             "action_fingerprint": action_fp,
@@ -722,9 +924,14 @@ class NervousSystem:
                 "exit_code": kwargs.get("exit_code", kwargs.get("returncode")),
             },
         }
-        # The first occurrence is eligible for remote assessment. Exact repeats
+        # Obvious deterministic failures are resolved locally: an exact retry cannot
+        # change a policy/schema/path result, so avoid spending a provider call on it.
+        # Other first failures remain eligible for remote assessment; exact repeats
         # are intentionally local until state/evidence changes.
-        if repeat_count >= 2:
+        if deterministic_reason:
+            event["suppress_remote"] = True
+            event["suppress_reason"] = "deterministic-failure-local-replan"
+        elif repeat_count >= 2:
             event["suppress_remote"] = True
             event["suppress_reason"] = "repeated-failure-dedup"
         return self.emit_event(event)
@@ -751,6 +958,10 @@ class NervousSystem:
             if directive is None:
                 return None
             same_action = bool(directive.action_fingerprint and proposed_fp == directive.action_fingerprint)
+            progress_control = directive.source == "local-progress-stall" and directive.control in BLOCKING_CONTROLS
+            environment_control = directive.source == "local-environment-thrash" and directive.control in BLOCKING_CONTROLS
+            mutation = tool_kind(tool_name, args) == "mutation"
+            relevant_mutation = mutation_is_relevant(tool_name, args, state.requested_paths) if mutation else False
             if not directive.delivered:
                 directive.delivered = True
                 self._metrics["controls_delivered"] += 1
@@ -763,6 +974,54 @@ class NervousSystem:
                 )
                 state.active_control = None
                 return None
+            if environment_control:
+                if environment_action(tool_name, args):
+                    directive.attempted_overrides += 1
+                    self._metrics["control_override_attempts"] += 1
+                    self._metrics["controls_enforced"] += 1
+                    self._metrics["environment_thrash_prevented_calls"] += 1
+                    self._record_control_lifecycle(
+                        state, directive, stage="next_action", disposition="enforced",
+                        proposed_action_fingerprint=proposed_fp, attempted_override=True,
+                    )
+                    return {
+                        "action": "block",
+                        "message": (
+                            "Nerve detected repeated environment/toolchain thrash. "
+                            "Inspect the repository's native test configuration or available runner "
+                            "before another package, virtualenv, or test-environment attempt."
+                        ),
+                    }
+                # A non-environment diagnostic/recovery step is permitted, but the
+                # lease remains until post-tool observation confirms it succeeded.
+                return None
+            if progress_control and not relevant_mutation:
+                if mutation:
+                    # Permit experiments/scratch mutations, but do not let them
+                    # satisfy the progress lease or unlock more investigation.
+                    self._metrics["progress_irrelevant_mutations"] += 1
+                    self._log("progress_irrelevant_mutation", {
+                        **directive.as_dict(), "tool_name": tool_name,
+                        "proposed_action_fingerprint": proposed_fp,
+                        "requested_paths": list(state.requested_paths),
+                    })
+                    return None
+                directive.attempted_overrides += 1
+                self._metrics["control_override_attempts"] += 1
+                self._metrics["controls_enforced"] += 1
+                self._metrics["progress_stall_prevented_calls"] += 1
+                self._record_control_lifecycle(
+                    state, directive, stage="next_action", disposition="enforced",
+                    proposed_action_fingerprint=proposed_fp, attempted_override=True,
+                )
+                return {
+                    "action": "block",
+                    "message": (
+                        "Nerve progress guard requires task-relevant implementation now. "
+                        "Read/search/test-only actions are paused; mutation tools remain available. "
+                        "A scratch or unrelated file will not clear the guard."
+                    ),
+                }
             if directive.control in BLOCKING_CONTROLS and same_action:
                 directive.attempted_overrides += 1
                 self._metrics["control_override_attempts"] += 1
@@ -1011,7 +1270,7 @@ class NervousSystem:
                         self._metrics["events_forwarded"] += 1
                         batch_payload = {"turn_id": tid, "event": batch_event, "router": {"reasons": ["adaptive-batch"], "score": 1.0}}
             if batch_payload is not None:
-                self._tasks.put(("assess", batch_payload))
+                self._tasks.put(("assess", batch_payload, contextvars.copy_context()))
 
     def _assessment_state(self, state: TurnState, event: dict[str, Any]) -> dict[str, Any]:
         failure_episode = None
@@ -1070,12 +1329,26 @@ class NervousSystem:
                     directive.delivered = True
                     self._metrics["controls_delivered"] += 1
                     self._record_control_lifecycle(state, directive, stage="delivered", disposition="model-context")
-        payload = {
-            "type": "JEV_DECISION_CHALLENGE",
-            "instruction": (
+        reason = str(challenge.get("reason") or "")
+        if reason.startswith("local-deterministic-failure:"):
+            instruction = (
+                "The last tool action failed deterministically. Do not repeat the same tool with the same arguments. "
+                "Choose a materially different allowed recovery or diagnostic step; if no viable alternative exists, escalate."
+            )
+        elif reason.startswith("local-progress-stall:"):
+            instruction = (
+                "This turn explicitly requires implementation but has spent many actions without task-relative progress. "
+                "Stop broad inspection. Mutation tools remain available; make the smallest evidence-backed change to the "
+                "requested artifact. Scratch/repro-only edits do not count as progress."
+            )
+        else:
+            instruction = (
                 "Reconsider the next action using this independent bounded judgment. Do not blindly undo completed "
                 "irreversible work; if the referenced state is no longer current, treat this as advisory evidence."
-            ),
+            )
+        payload = {
+            "type": "JEV_DECISION_CHALLENGE",
+            "instruction": instruction,
             **challenge,
         }
         return str(result) + "\n\n<JEV_NERVOUS_SYSTEM>\n" + json.dumps(payload, sort_keys=True) + "\n</JEV_NERVOUS_SYSTEM>"
@@ -1084,6 +1357,43 @@ class NervousSystem:
         state = self._resolve_turn(turn_id=str(kwargs.get("turn_id") or ""), session_id=str(kwargs.get("session_id") or ""))
         if state is None or state.admission not in {"ON", "WATCH"}:
             return None
+        changed_paths_present = "changed_paths" in kwargs
+        changed_paths = list(kwargs.get("changed_paths") or [])
+        coding_change = state.change_required and (bool(kwargs.get("coding")) or changed_paths_present)
+        relevant_persisted = changed_paths_relevant(changed_paths, state.requested_paths) if changed_paths_present else None
+        with self._lock:
+            no_relevant_attempt = coding_change and state.relevant_mutation_attempts == 0
+            no_relevant_persisted = coding_change and relevant_persisted is False
+            missing_verification = (
+                coding_change and state.verification_required and state.verified_test_passes == 0
+            )
+            if no_relevant_attempt or no_relevant_persisted or missing_verification:
+                self._metrics["progress_false_completion_prevented"] += 1
+        if no_relevant_attempt or no_relevant_persisted or missing_verification:
+            if no_relevant_attempt:
+                reason = "no task-relevant mutation was attempted"
+            elif no_relevant_persisted:
+                reason = "verification reports no task-relevant changed path"
+            else:
+                reason = "the requested verification/test has not passed"
+            self._log("progress_completion_blocked", {
+                "turn_id": state.turn_id,
+                "session_id": state.session_id,
+                "tool_actions": state.tool_actions,
+                "mutation_attempts": state.mutation_attempts,
+                "relevant_mutation_attempts": state.relevant_mutation_attempts,
+                "verified_test_passes": state.verified_test_passes,
+                "requested_paths": list(state.requested_paths),
+                "changed_paths": changed_paths,
+                "reason": reason,
+            })
+            return {
+                "action": "continue",
+                "message": (
+                    f"Nerve completion integrity check: {reason}. Do not claim completion; "
+                    "make and verify the required task-relative change."
+                ),
+            }
         event = {
             "type": "COMPLETION_CANDIDATE",
             "turn_id": state.turn_id,
@@ -1159,6 +1469,14 @@ class NervousSystem:
                 "provider_calls": state.provider_calls,
                 "provider_errors": state.provider_errors,
                 "watch_promotions": state.watch_promotions,
+                "change_required": state.change_required,
+                "verification_required": state.verification_required,
+                "requested_paths": list(state.requested_paths),
+                "tool_actions": state.tool_actions,
+                "mutation_attempts": state.mutation_attempts,
+                "relevant_mutation_attempts": state.relevant_mutation_attempts,
+                "verified_test_passes": state.verified_test_passes,
+                "progress_challenge_issued": state.progress_challenge_issued,
                 "pending_challenges": len(state.pending_challenges),
                 "pending_batch_events": len(state.pending_batch),
                 "failure_episodes": len(state.failure_episodes),
@@ -1221,6 +1539,13 @@ class NervousSystem:
             "failure_episodes": int(m.get("failure_episodes", 0)),
             "repeated_failures_seen": int(m.get("repeated_failures_seen", 0)),
             "local_loop_breakers": int(m.get("local_loop_breakers", 0)),
+            "deterministic_failure_replans": int(m.get("deterministic_failure_replans", 0)),
+            "environment_thrash_replans": int(m.get("environment_thrash_replans", 0)),
+            "environment_thrash_prevented_calls": int(m.get("environment_thrash_prevented_calls", 0)),
+            "progress_stall_replans": int(m.get("progress_stall_replans", 0)),
+            "progress_stall_prevented_calls": int(m.get("progress_stall_prevented_calls", 0)),
+            "progress_irrelevant_mutations": int(m.get("progress_irrelevant_mutations", 0)),
+            "progress_false_completion_prevented": int(m.get("progress_false_completion_prevented", 0)),
             "jev_calls_per_turn": round(calls / turns, 4) if turns else 0.0,
             "jev_calls_per_100_events": round(100.0 * calls / events, 4) if events else 0.0,
             "jev_calls_per_meaningful_decision": round(calls / meaningful, 4) if meaningful else 0.0,

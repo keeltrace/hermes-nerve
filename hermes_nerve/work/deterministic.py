@@ -599,7 +599,6 @@ def _safe_command_from_description(description: str) -> list[str] | None:
                 return parts
     return None
 
-
 def _run(parts: list[str], workspace: str, timeout: int = 180) -> tuple[int, str]:
     try:
         p = subprocess.run(parts, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout, check=False)
@@ -726,15 +725,16 @@ def auto_verify_completion(supervisor, identity: RunIdentity, proposal: dict[str
 
     # Phase 1: all objective criteria except the summary that the harness itself
     # is responsible for emitting during native completion.
-    current = supervisor.store.latest_contract_verdicts(identity.task_id, identity.contract_hash)
+    #
+    # Re-evaluate every machine-checkable criterion on every completion attempt.
+    # A previous PASS is not stable evidence: tests can fail after a later edit,
+    # files can disappear, git can become dirty/untracked, protected files can
+    # change, and token usage can cross its locked ceiling. Completion must
+    # reflect current workspace/run state rather than a cached earlier verdict.
     summary_criteria = []
     for criterion in contract.criteria:
         if _is_completion_summary_criterion(criterion.description):
             summary_criteria.append(criterion)
-            continue
-        # Re-check deterministic FAILs as work may have changed since the last
-        # attempt. Stable PASS facts may be reused under the same locked contract.
-        if str((current.get(criterion.id) or {}).get("state")) == "VERIFIED_PASS":
             continue
         passed, reason = _evaluate_criterion(
             supervisor, identity, criterion, workspace=workspace, base=base
