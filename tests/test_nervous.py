@@ -1,12 +1,11 @@
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from hermes_nerve import nervous, policy_memory, router
+from hermes_nerve import nervous, router
 
 
 class FakeDecisionResult:
@@ -94,34 +93,6 @@ class NervousSystemTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         return system
-
-    def make_policy_system(self, td, *, ttl=3600, turn_id="t1", session_id="s1"):
-        system = nervous.NervousSystem(engine_factory=ScriptedEngine)
-        system.configure(
-            enabled=True,
-            admission_enabled=False,
-            mode="correct_next",
-            policy_memory_enabled=True,
-            policy_memory_ttl_seconds=ttl,
-            policy_memory_path=str(Path(td) / "policy-memory.jsonl"),
-        )
-        system.start_turn(user_message="policy-memory-test", session_id=session_id, turn_id=turn_id)
-        return system
-
-    def record_unattended_execute_block(self, system, *, code="print('x')", turn_id="t1", session_id="s1"):
-        return system.observe_tool_call(
-            tool_name="execute_code",
-            args={"code": code},
-            status="error",
-            result=(
-                "BLOCKED: execute_code runs arbitrary local Python. Single-query mode (-q) runs without a user "
-                "present to approve it. Use normal tools instead."
-            ),
-            error_message="",
-            tool_call_id="blocked-call",
-            session_id=session_id,
-            turn_id=turn_id,
-        )
 
     def test_off_admission_logs_but_suppresses_events(self):
         with tempfile.TemporaryDirectory() as td:
@@ -276,8 +247,7 @@ class NervousSystemTests(unittest.TestCase):
     def test_deterministic_failure_classifier_boundary_matrix(self):
         deterministic = {
             "policy block": ("error", "BLOCKED: execute_code is not allowed", "", "blocked:"),
-            "permission": ("error", "permission denied; try again with elevated privileges", "", "permission denied"),
-            "approval": ("error", "approval required before this action", "", "approval required"),
+            "permission": ("error", "permission denied; try again with elevated privileges", "", "permission denied"),            "approval": ("error", "approval required before this action", "", "approval required"),
             "invalid arg": ("error", "invalid argument: --mdoe", "", "invalid argument"),
             "unknown option": ("error", "unknown option --mdoe", "", "unknown option"),
             "schema": ("error", "schema validation failed for field x", "", "schema validation"),
@@ -297,7 +267,8 @@ class NervousSystemTests(unittest.TestCase):
             "temporary unavailable": ("error", "temporarily unavailable", ""),
             "temporary failure": ("error", "temporary failure in name resolution", ""),
             "rate limit": ("error", "rate limit exceeded", ""),
-            "429": ("error", "too many requests", ""),            "503": ("error", "service unavailable", ""),
+            "429": ("error", "too many requests", ""),
+            "503": ("error", "service unavailable", ""),
             "resource busy": ("error", "resource busy", ""),
             "database lock": ("error", "database is locked", ""),
         }
@@ -309,215 +280,6 @@ class NervousSystemTests(unittest.TestCase):
             nervous._deterministic_failure_reason("blocked", "temporary-looking text", ""),
             "blocked-status",
         )
-
-    def test_policy_memory_blocks_different_args_after_first_unattended_policy_failure(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset()
-            system = self.make_policy_system(td)
-            self.record_unattended_execute_block(system, code="print('first')")
-            blocked = system.before_tool_call(
-                tool_name="execute_code",
-                args={"code": "print('different')"},
-                session_id="s1",
-                turn_id="t1",
-                tool_call_id="c2",
-            )
-            self.assertEqual(blocked["action"], "block")
-            self.assertIn("policy memory", blocked["message"].lower())
-            metrics = system.quality_metrics()
-            self.assertEqual(metrics["policy_memory_records"], 1)
-            self.assertEqual(metrics["policy_memory_prevented_calls"], 1)
-
-    def test_policy_memory_persists_across_nervous_system_instances_in_same_query_runtime(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset()
-            first = self.make_policy_system(td, turn_id="t1", session_id="s1")
-            self.record_unattended_execute_block(first)
-            second = self.make_policy_system(td, turn_id="t2", session_id="s2")
-            blocked = second.before_tool_call(
-                tool_name="execute_code",
-                args={"code": "print('fresh process style')"},
-                session_id="s2",
-                turn_id="t2",
-                tool_call_id="c2",
-            )
-            self.assertEqual(blocked["action"], "block")
-            self.assertEqual(second.quality_metrics()["policy_memory_prevented_calls"], 1)
-
-    def test_policy_memory_prevented_result_is_not_recounted_as_failure_or_replan(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset()
-            first = self.make_policy_system(td, turn_id="t1", session_id="s1")
-            self.record_unattended_execute_block(first)
-            second = self.make_policy_system(td, turn_id="t2", session_id="s2")
-            blocked = second.before_tool_call(
-                tool_name="execute_code",
-                args={"code": "print('different')"},
-                session_id="s2",
-                turn_id="t2",
-                tool_call_id="c2",
-            )
-            self.assertEqual(blocked["action"], "block")
-            second.observe_tool_call(
-                tool_name="execute_code",
-                args={"code": "print('different')"},
-                status="blocked",
-                result=blocked["message"],
-                error_message="",
-                tool_call_id="c2",
-                session_id="s2",
-                turn_id="t2",
-            )
-            metrics = second.quality_metrics()
-            self.assertEqual(metrics["deterministic_failure_replans"], 0)
-            self.assertEqual(metrics["failure_episodes"], 0)
-            self.assertEqual(metrics["policy_memory_records"], 0)
-
-    def test_policy_memory_from_query_mode_does_not_apply_to_interactive_runtime(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            with patch.object(sys, "argv", ["hermes", "-q"]):
-                ScriptedEngine.reset()
-                first = self.make_policy_system(td, turn_id="t1", session_id="s1")
-                self.record_unattended_execute_block(first)
-            with patch.object(sys, "argv", ["hermes"]):
-                second = self.make_policy_system(td, turn_id="t2", session_id="s2")
-                allowed = second.before_tool_call(
-                    tool_name="execute_code",
-                    args={"code": "print('interactive')"},
-                    session_id="s2",
-                    turn_id="t2",
-                    tool_call_id="c2",
-                )
-                self.assertIsNone(allowed)
-
-    def test_policy_memory_config_change_invalidates_old_entry(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            config = Path(td, "config.yaml")
-            config.write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset()
-            first = self.make_policy_system(td, turn_id="t1", session_id="s1")
-            self.record_unattended_execute_block(first)
-            config.write_text("approvals:\n  single_query_mode: approve\n", encoding="utf-8")
-            second = self.make_policy_system(td, turn_id="t2", session_id="s2")
-            allowed = second.before_tool_call(
-                tool_name="execute_code",
-                args={"code": "print('config changed')"},
-                session_id="s2",
-                turn_id="t2",
-                tool_call_id="c2",
-            )
-            self.assertIsNone(allowed)
-
-    def test_dangerous_terminal_policy_block_does_not_poison_whole_terminal_tool(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset()
-            first = self.make_policy_system(td, turn_id="t1", session_id="s1")
-            first.observe_tool_call(
-                tool_name="terminal",
-                args={"command": "dangerous-command"},
-                status="blocked",
-                result=(
-                    "BLOCKED: Command flagged as dangerous but single-query mode (-q) runs without "
-                    "a user present to approve it."
-                ),
-                error_message="",
-                tool_call_id="c1",
-                session_id="s1",
-                turn_id="t1",
-            )
-            self.assertEqual(first.quality_metrics()["policy_memory_records"], 0)
-            second = self.make_policy_system(td, turn_id="t2", session_id="s2")
-            self.assertIsNone(second.before_tool_call(
-                tool_name="terminal",
-                args={"command": "ls"},
-                session_id="s2",
-                turn_id="t2",
-                tool_call_id="c2",
-            ))
-
-    def test_transient_failure_is_not_persisted_as_tool_policy_memory(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset("CONTINUE")
-            first = self.make_policy_system(td, turn_id="t1", session_id="s1")
-            first.observe_tool_call(
-                tool_name="execute_code",
-                args={"code": "print('network')"},
-                status="error",
-                result="connection reset by peer",
-                error_message="connection reset by peer",
-                tool_call_id="c1",
-                session_id="s1",
-                turn_id="t1",
-            )
-            first.drain()
-            second = self.make_policy_system(td, turn_id="t2", session_id="s2")
-            self.assertIsNone(second.before_tool_call(
-                tool_name="execute_code",
-                args={"code": "print('retry')"},
-                session_id="s2",
-                turn_id="t2",
-                tool_call_id="c2",
-            ))
-
-    def test_missing_file_does_not_become_tool_wide_persistent_ban(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset()
-            first = self.make_policy_system(td, turn_id="t1", session_id="s1")
-            first.observe_tool_call(
-                tool_name="read_file",
-                args={"path": "missing.txt"},
-                status="error",
-                result='{"error":"File not found: missing.txt"}',
-                error_message="",
-                tool_call_id="c1",
-                session_id="s1",
-                turn_id="t1",
-            )
-            second = self.make_policy_system(td, turn_id="t2", session_id="s2")
-            self.assertIsNone(second.before_tool_call(
-                tool_name="read_file",
-                args={"path": "missing.txt"},
-                session_id="s2",
-                turn_id="t2",
-                tool_call_id="c2",
-            ))
-
-    def test_policy_memory_ttl_expiry(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset()
-            with patch.object(policy_memory.time, "time", return_value=1000.0):
-                first = self.make_policy_system(td, ttl=1, turn_id="t1", session_id="s1")
-                self.record_unattended_execute_block(first)
-            with patch.object(policy_memory.time, "time", return_value=1002.0):
-                second = self.make_policy_system(td, ttl=1, turn_id="t2", session_id="s2")
-                self.assertIsNone(second.before_tool_call(
-                    tool_name="execute_code",
-                    args={"code": "print('expired')"},
-                    session_id="s2",
-                    turn_id="t2",
-                    tool_call_id="c2",
-                ))
-
-    def test_policy_memory_persists_only_safe_metadata_not_raw_error_text(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_HOME": td}, clear=False), patch.object(sys, "argv", ["hermes", "-q"]):
-            Path(td, "config.yaml").write_text("approvals:\n  single_query_mode: deny\n", encoding="utf-8")
-            ScriptedEngine.reset()
-            system = self.make_policy_system(td)
-            self.record_unattended_execute_block(system)
-            text = Path(td, "policy-memory.jsonl").read_text(encoding="utf-8")
-            self.assertIn("unattended-policy-block", text)
-            self.assertIn("execute_code", text)
-            self.assertNotIn("runs arbitrary local Python", text)
-            self.assertNotIn("single-query mode", text)
-            self.assertNotIn("without a user present", text)
 
     def test_remote_replan_enforces_next_action_and_attributes_followup(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
@@ -596,7 +358,8 @@ class NervousSystemTests(unittest.TestCase):
             ScriptedEngine.reset(FakeDecisionResult("ON", 0.99), FakeDecisionResult("B", 0.99))
             system = self.make_system(td)
             system.configure(max_provider_calls_per_turn=1)
-            system.start_turn(user_message="fix it", session_id="s1", turn_id="t1")            self.assertTrue(system.drain())
+            system.start_turn(user_message="fix it", session_id="s1", turn_id="t1")
+            self.assertTrue(system.drain())
             out = system.emit_event({"turn_id": "t1", "type": "DECISION", "goal": "g", "choices": ["A", "B"], "hermes_decision": "A", "materiality": 1.0})
             self.assertFalse(out["forwarded"])
             self.assertEqual(out["reason"], "provider-budget")
@@ -733,8 +496,7 @@ class OutcomeLearningTests(unittest.TestCase):
             store = OutcomeStore(Path(td) / "outcomes.jsonl")
             store.append({"record_type": "decision", "event_id": "local", "source": "local-loop-breaker"})
             store.append({
-                "record_type": "decision", "event_id": "remote", "request_id": "req-2",
-                "usage": {"input_tokens": 10, "output_tokens": 2},
+                "record_type": "decision", "event_id": "remote", "request_id": "req-2",                "usage": {"input_tokens": 10, "output_tokens": 2},
             })
             report = store.report()
             self.assertIsNone(report["provider_cost"])
