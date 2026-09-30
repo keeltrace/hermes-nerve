@@ -247,7 +247,8 @@ class NervousSystem:
                     pass
             if "emit_prompt_hint" in kwargs:
                 cfg.emit_prompt_hint = bool(kwargs["emit_prompt_hint"])
-            if "local_learning" in kwargs:                cfg.local_learning = bool(kwargs["local_learning"])
+            if "local_learning" in kwargs:
+                cfg.local_learning = bool(kwargs["local_learning"])
             if "local_learning_min_samples" in kwargs:
                 try:
                     cfg.local_learning_min_samples = max(3, min(1000, int(kwargs["local_learning_min_samples"])))
@@ -496,7 +497,8 @@ class NervousSystem:
         self._metrics["control_replan"] += 1
         self._outcomes.append({
             "record_type": "decision",
-            "decision_id": decision_id,            "turn_id": state.turn_id,
+            "decision_id": decision_id,
+            "turn_id": state.turn_id,
             "event_id": episode.last_event_id,
             "decision_type": decision_type,
             "hermes_decision": "RETRY_SAME_ACTION",
@@ -745,7 +747,8 @@ class NervousSystem:
                 exit_code=exit_code,
             )
             with self._lock:
-                episode = state.failure_episodes.get(fail_fp)                if episode is None:
+                episode = state.failure_episodes.get(fail_fp)
+                if episode is None:
                     episode = FailureEpisode(
                         fingerprint=fail_fp,
                         action_fingerprint=action_fp,
@@ -994,7 +997,8 @@ class NervousSystem:
                 challenge = Challenge(
                     challenge_id=uuid.uuid4().hex,
                     decision_id=decision_id,
-                    turn_id=tid,                    event_id=str(event.get("event_id") or ""),
+                    turn_id=tid,
+                    event_id=str(event.get("event_id") or ""),
                     state_version=str(event.get("state_version") or ""),
                     decision_version=str(event.get("decision_version") or ""),
                     hermes_decision=hermes_decision,
@@ -1243,7 +1247,8 @@ class NervousSystem:
                 "events_suppressed": state.events_suppressed,
                 "provider_calls": state.provider_calls,
                 "provider_errors": state.provider_errors,
-                "watch_promotions": state.watch_promotions,                "pending_challenges": len(state.pending_challenges),
+                "watch_promotions": state.watch_promotions,
+                "pending_challenges": len(state.pending_challenges),
                 "pending_batch_events": len(state.pending_batch),
                 "failure_episodes": len(state.failure_episodes),
                 "active_control": state.active_control.as_dict() if state.active_control else None,
