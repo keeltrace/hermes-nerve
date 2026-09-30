@@ -98,10 +98,16 @@ Current Hermes exposes a public `ContextEngine` ABC and `ctx.register_context_en
 Activation is explicit:
 
 ```bash
-hermes config set context.engine jev --force
+hermes config set context.engine jev
 ```
 
-Modes:
+`jev` is the engine's registered name. It is unrelated to the `jev` Reflex decision backend, which only `reflex_backend` selects: with `context.engine: jev` and `reflex_backend: laya`, curation decisions go to Laya.
+
+Do not set `context.engine: nerve`. That value names the plugin directory, so Hermes' context-engine directory loader imports the plugin without access to its settings. Nerve now refuses that path and logs a warning pointing to `jev`; Hermes then falls back to its built-in compressor. Before that change, the loader silently built an unconfigured engine that ignored every Nerve setting.
+
+While `jev` is the active engine, Hermes no longer uses the settings that tune its built-in compressor, such as `compression.threshold`, `compression.protect_first_n`, `compression.protect_last_n` and `compression.target_ratio`. Agent-level settings still apply: `compression.enabled` still decides whether compaction runs at all, and `compression.model_thresholds` still reaches the engine. Nerve's own settings decide when and how it compacts: `context_engine_threshold_percent` (default `0.72`, clamped to `0.30`–`0.95`), `context_engine_protect_first_n`, and `context_engine_protect_last_n` (default `6`; the built-in fallback keeps at least 6).
+
+Modes (`context_engine_mode`; any value other than `apply` or `shadow` falls back to `shadow`):
 
 - `shadow`: builds non-mutating Jev plans while delegating actual pressure-triggered compaction to Hermes' built-in compressor when fallback is available.
 - `apply`: at the configured threshold, Jev evaluates eligible old tool results and anchors safe candidates.
@@ -115,7 +121,7 @@ If no eligible tool-result evidence exists, or Jev safely decides to reclaim not
 Disable only for experiments:
 
 ```bash
-hermes config set plugins.entries.hermes-nerve.settings.context_engine_fallback_builtin false --force
+hermes config set plugins.entries.nerve.settings.context_engine_fallback_builtin false --force
 ```
 
 ## Policy defaults
