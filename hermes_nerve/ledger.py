@@ -71,13 +71,14 @@ def record_evidence(
     metadata: dict[str, Any] | None = None,
     action: str = "OBSERVED",
     source: str = "context",
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     safe_metadata = redact(metadata or {})
     record: dict[str, Any] = {
         "schema": "hermes-nerve-evidence/v1",
         "event": "evidence",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "session_id": _current_session_id,
+        "session_id": _current_session_id if session_id is None else str(session_id),
         "evidence_id": str(evidence_id),
         "kind": str(kind),
         "recoverable": bool(recoverable),
@@ -198,6 +199,10 @@ def observe_tool_call(*, tool_name: str, args: dict[str, Any], result: str, task
         },
         action="OBSERVED",
         source="post_tool_call",
+        # Hermes passes session_id to every post_tool_call hook, "" when the call has
+        # no session. Only a host that omits the field falls back to the process-wide
+        # value, which only the context engine sets.
+        session_id=kwargs.get("session_id"),
     )
     return None
 

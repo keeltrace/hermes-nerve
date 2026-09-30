@@ -1,4 +1,4 @@
-# Nerve v0.3.0 setup
+# Nerve v0.3.1rc1 setup
 
 ## Install
 
@@ -10,30 +10,36 @@ hermes plugins doctor . --ci
 
 Expected Legacy public surface: 16 tools, 9 hook names, and the optional `jev` ContextEngine. Named profiles intentionally register smaller module-specific surfaces.
 
+## Where Nerve settings live
+
+Hermes gives a plugin only the settings in its own entry, `plugins.entries.<plugin id>`, and Nerve's plugin id is `nerve`. Within that entry, Hermes reads `settings` first and falls back to the older `config` subtree. Every `hermes config set` command below writes to `plugins.entries.nerve.settings`.
+
+Earlier docs wrote `plugins.entries.hermes-nerve.settings.*`. Hermes never reads that block, so those settings silently had no effect: for example, `reflex_backend: laya` left decisions on the default `jev` backend. Nerve now logs a warning at startup when the old block is present. Move its keys under `plugins.entries.nerve.settings`, then remove it with `hermes config unset plugins.entries.hermes-nerve`.
+
 ## Provider
 
 OpenRouter (live-tested historically in v0.1.x):
 
 ```bash
 export OPENROUTER_API_KEY='...'
-hermes config set plugins.entries.hermes-nerve.settings.jev_provider openrouter --force
-hermes config set plugins.entries.hermes-nerve.settings.jev_model typesafe/jev-1.13 --force
+hermes config set plugins.entries.nerve.settings.jev_provider openrouter --force
+hermes config set plugins.entries.nerve.settings.jev_model typesafe/jev-1.13 --force
 ```
 
 Direct TypeSafe (wire-tested in v0.2.1.2; independently live-smoked on v0.2.1.1):
 
 ```bash
 export TYPESAFE_API_KEY='...'
-hermes config set plugins.entries.hermes-nerve.settings.jev_provider typesafe --force
-hermes config set plugins.entries.hermes-nerve.settings.typesafe_model jev-latest --force
+hermes config set plugins.entries.nerve.settings.jev_provider typesafe --force
+hermes config set plugins.entries.nerve.settings.typesafe_model jev-latest --force
 ```
 
 OpenCode Zen:
 
 ```bash
 export OPENCODE_API_KEY='...'
-hermes config set plugins.entries.hermes-nerve.settings.jev_provider opencode --force
-hermes config set plugins.entries.hermes-nerve.settings.opencode_model jev-1.13 --force
+hermes config set plugins.entries.nerve.settings.jev_provider opencode --force
+hermes config set plugins.entries.nerve.settings.opencode_model jev-1.13 --force
 ```
 
 OpenCode access in Nerve is paid-only. The `jev-1.13-free` tier is not supported because it does not work with Hermes.
@@ -43,11 +49,11 @@ Only the selected provider's credential is required.
 ## Nervous system defaults
 
 ```bash
-hermes config set plugins.entries.hermes-nerve.settings.nervous_enabled true --force
-hermes config set plugins.entries.hermes-nerve.settings.nervous_turn_admission true --force
-hermes config set plugins.entries.hermes-nerve.settings.nervous_mode correct_next --force
-hermes config set plugins.entries.hermes-nerve.settings.nervous_challenge_confidence 0.86 --force
-hermes config set plugins.entries.hermes-nerve.settings.nervous_call_threshold 0.58 --force
+hermes config set plugins.entries.nerve.settings.nervous_enabled true --force
+hermes config set plugins.entries.nerve.settings.nervous_turn_admission true --force
+hermes config set plugins.entries.nerve.settings.nervous_mode correct_next --force
+hermes config set plugins.entries.nerve.settings.nervous_challenge_confidence 0.86 --force
+hermes config set plugins.entries.nerve.settings.nervous_call_threshold 0.58 --force
 ```
 
 The old synchronous pre-tool gate remains `off` by default. It is compatibility/special-purpose behavior, not the recommended v0.2 decision architecture.

@@ -11,7 +11,7 @@ Nerve v0.2.2.dev4 supports three System One transports behind one decision contr
 
 ```bash
 export OPENROUTER_API_KEY='...'
-hermes config set plugins.entries.hermes-nerve.settings.jev_provider openrouter --force
+hermes config set plugins.entries.nerve.settings.jev_provider openrouter --force
 ```
 
 ## TypeSafe direct
@@ -23,8 +23,8 @@ hermes config set plugins.entries.hermes-nerve.settings.jev_provider openrouter 
 
 ```bash
 export TYPESAFE_API_KEY='...'
-hermes config set plugins.entries.hermes-nerve.settings.jev_provider typesafe --force
-hermes config set plugins.entries.hermes-nerve.settings.typesafe_model jev-latest --force
+hermes config set plugins.entries.nerve.settings.jev_provider typesafe --force
+hermes config set plugins.entries.nerve.settings.typesafe_model jev-latest --force
 ```
 
 ## OpenCode Zen
@@ -36,8 +36,8 @@ hermes config set plugins.entries.hermes-nerve.settings.typesafe_model jev-lates
 
 ```bash
 export OPENCODE_API_KEY='...'
-hermes config set plugins.entries.hermes-nerve.settings.jev_provider opencode --force
-hermes config set plugins.entries.hermes-nerve.settings.opencode_model jev-1.13 --force
+hermes config set plugins.entries.nerve.settings.jev_provider opencode --force
+hermes config set plugins.entries.nerve.settings.opencode_model jev-1.13 --force
 ```
 
 Nerve rejects `jev-1.13-free` for the OpenCode provider because that tier does not work with Hermes.

@@ -141,7 +141,8 @@ class NerveContextEngine(ContextEngine):
     ) -> None:
         self.mode = str(mode or "shadow").strip().lower()
         if self.mode not in {"apply", "shadow"}:
-            self.mode = "apply"
+            # Fail safe: only an explicit "apply" may enable destructive curation.
+            self.mode = "shadow"
         self.threshold_percent = max(0.30, min(0.95, float(threshold_percent)))
         self.protect_first_n = max(0, int(protect_first_n))
         self.protect_last_n = max(1, int(protect_last_n))
@@ -192,7 +193,7 @@ class NerveContextEngine(ContextEngine):
                 protect_last_n=max(self.protect_last_n, 6),
                 quiet_mode=True,
                 base_url=self._route.get("base_url", ""),
-                api_key=self._route.get("api_key", ""),
+                [REDACTED]("api_key", ""),
                 config_context_length=self.context_length or None,
                 provider=self._route.get("provider", ""),
                 api_mode=self._route.get("api_mode", ""),
@@ -202,7 +203,7 @@ class NerveContextEngine(ContextEngine):
                     self._fallback.update_model(
                         self._model, self.context_length,
                         base_url=self._route.get("base_url", ""),
-                        api_key=self._route.get("api_key", ""),
+                        [REDACTED]("api_key", ""),
                         provider=self._route.get("provider", ""),
                         api_mode=self._route.get("api_mode", ""),
                     )
