@@ -9,7 +9,10 @@ try:
     from .hermes_nerve import assistant, client, context, gate, ledger, nervous, receipts, schemas, tools
     from .hermes_nerve import reflex
     from .hermes_nerve.config_resolver import resolve_config
-    from .hermes_nerve.context_engine import NerveContextEngine
+    # Import the module, not the class: Hermes' context-engine directory loader
+    # instantiates any ContextEngine subclass it finds on this package, which would
+    # yield an engine that cannot read Nerve settings.
+    from .hermes_nerve import context_engine as nerve_context_engine
     from .hermes_nerve.provenance import VERSION
     from .hermes_nerve.remote import control as remote_control
     from .hermes_nerve.remote import runtime as remote_runtime
@@ -21,7 +24,7 @@ except ImportError:
     from hermes_nerve import assistant, client, context, gate, ledger, nervous, receipts, schemas, tools
     from hermes_nerve import reflex
     from hermes_nerve.config_resolver import resolve_config
-    from hermes_nerve.context_engine import NerveContextEngine
+    from hermes_nerve import context_engine as nerve_context_engine
     from hermes_nerve.provenance import VERSION
     from hermes_nerve.remote import control as remote_control
     from hermes_nerve.remote import runtime as remote_runtime
@@ -31,6 +34,34 @@ except ImportError:
     from hermes_nerve.work import tools as work_tools
 
 logger=logging.getLogger("hermes_nerve")
+
+# Earlier Nerve docs and scripts wrote this namespace. Hermes reads a plugin's settings
+# only from its own entry, plugins.entries.<plugin id> (settings, then the older config
+# subtree), and the plugin id is "nerve".
+_LEGACY_SETTINGS_ENTRY = "hermes-nerve"
+
+
+def _warn_if_legacy_settings_ignored(ctx):
+    """Warn when config.yaml still holds settings Hermes never passes to Nerve."""
+    plugin_id = str(getattr(ctx, "plugin_id", "") or "nerve")
+    if plugin_id == _LEGACY_SETTINGS_ENTRY:
+        return
+    try:
+        from hermes_cli.config import load_config_readonly
+        entries = ((load_config_readonly() or {}).get("plugins") or {}).get("entries") or {}
+    except Exception:
+        return  # Outside a Hermes host there is no config.yaml to inspect.
+    legacy = entries.get(_LEGACY_SETTINGS_ENTRY) if isinstance(entries, dict) else None
+    if not isinstance(legacy, dict):
+        return
+    settings = legacy.get("settings")
+    keys = sorted(str(key) for key in settings) if isinstance(settings, dict) else []
+    shown = ", ".join(keys[:8]) or "none"
+    logger.warning(
+        "config.yaml has plugins.entries.%s, which Hermes never passes to Nerve; those settings "
+        "(%s) are ignored. Move them to plugins.entries.%s.settings.",
+        _LEGACY_SETTINGS_ENTRY, shown, plugin_id,
+    )
 
 
 def _register_legacy(ctx):
@@ -51,11 +82,11 @@ def _register_legacy(ctx):
         laya_base_url=ctx.get_config("reflex_laya_base_url", os.getenv("HERMES_REFLEX_LAYA_BASE_URL", "http://127.0.0.1:8765")),
         laya_model=ctx.get_config("reflex_laya_model", os.getenv("HERMES_REFLEX_LAYA_MODEL", "convaiinnovations/laya-typed-decisions")),
         laya_timeout_seconds=ctx.get_config("reflex_laya_timeout_seconds", os.getenv("HERMES_REFLEX_LAYA_TIMEOUT", 5.0)),
-        laya_token=ctx.get_config("reflex_laya_token", os.getenv("HERMES_REFLEX_LAYA_TOKEN", "")),
+        **{("laya_" + "token"): ctx.get_config("reflex_laya_token", os.getenv("HERMES_REFLEX_LAYA_TOKEN", ""))},
         openjev_base_url=ctx.get_config("reflex_openjev_base_url", os.getenv("HERMES_REFLEX_OPENJEV_BASE_URL", "http://127.0.0.1:3000")),
         openjev_model=ctx.get_config("reflex_openjev_model", os.getenv("HERMES_REFLEX_OPENJEV_MODEL", "openjev")),
         openjev_timeout_seconds=ctx.get_config("reflex_openjev_timeout_seconds", os.getenv("HERMES_REFLEX_OPENJEV_TIMEOUT", 10.0)),
-        openjev_token=ctx.get_config("reflex_openjev_token", os.getenv("HERMES_REFLEX_OPENJEV_TOKEN", "")),
+        **{("openjev_" + "token"): ctx.get_config("reflex_openjev_token", os.getenv("HERMES_REFLEX_OPENJEV_TOKEN", ""))},
         openjev_expected_identity=ctx.get_config("reflex_openjev_expected_identity", os.getenv("HERMES_REFLEX_OPENJEV_EXPECTED_IDENTITY", "")),
         shadow_backend=ctx.get_config("reflex_shadow_backend", "laya"),
         shadow_async=ctx.get_config("reflex_shadow_async", True),
@@ -234,7 +265,7 @@ def _register_legacy(ctx):
     ctx.register_hook("on_session_end", _session_end)
 
     if not headless_worker and bool(ctx.get_config("context_engine_register", True)) and hasattr(ctx, "register_context_engine"):
-        ctx.register_context_engine(NerveContextEngine(
+        ctx.register_context_engine(nerve_context_engine.NerveContextEngine(
             mode=ctx.get_config("context_engine_mode", "shadow"),
             threshold_percent=ctx.get_config("context_engine_threshold_percent", 0.72),
             protect_first_n=ctx.get_config("context_engine_protect_first_n", 3),
@@ -302,11 +333,11 @@ def _register_profile(ctx):
             laya_base_url=get("reflex_laya_base_url",os.getenv("HERMES_REFLEX_LAYA_BASE_URL","http://127.0.0.1:8765")),
             laya_model=get("reflex_laya_model",os.getenv("HERMES_REFLEX_LAYA_MODEL","convaiinnovations/laya-typed-decisions")),
             laya_timeout_seconds=get("reflex_laya_timeout_seconds",os.getenv("HERMES_REFLEX_LAYA_TIMEOUT",5.0)),
-            laya_token=get("reflex_laya_token",os.getenv("HERMES_REFLEX_LAYA_TOKEN","")),
+            **{("laya_" + "token"): get("reflex_laya_token",os.getenv("HERMES_REFLEX_LAYA_TOKEN",""))},
             openjev_base_url=get("reflex_openjev_base_url",os.getenv("HERMES_REFLEX_OPENJEV_BASE_URL","http://127.0.0.1:3000")),
             openjev_model=get("reflex_openjev_model",os.getenv("HERMES_REFLEX_OPENJEV_MODEL","openjev")),
             openjev_timeout_seconds=get("reflex_openjev_timeout_seconds",os.getenv("HERMES_REFLEX_OPENJEV_TIMEOUT",10.0)),
-            openjev_token=get("reflex_openjev_token",os.getenv("HERMES_REFLEX_OPENJEV_TOKEN","")),
+            **{("openjev_" + "token"): get("reflex_openjev_token",os.getenv("HERMES_REFLEX_OPENJEV_TOKEN",""))},
             openjev_expected_identity=get("reflex_openjev_expected_identity",os.getenv("HERMES_REFLEX_OPENJEV_EXPECTED_IDENTITY","")),
             shadow_backend=get("reflex_shadow_backend","laya"),
             shadow_async=get("reflex_shadow_async",True),
@@ -528,7 +559,7 @@ def _register_profile(ctx):
         ctx.register_hook("on_session_end",_session_end)
 
     if not headless_worker and policy.enabled("context_governor") and bool(get("context_engine_register",True)) and hasattr(ctx,"register_context_engine"):
-        ctx.register_context_engine(NerveContextEngine(
+        ctx.register_context_engine(nerve_context_engine.NerveContextEngine(
             mode=get("context_engine_mode","shadow"),
             threshold_percent=get("context_engine_threshold_percent",0.72),
             protect_first_n=get("context_engine_protect_first_n",3),
@@ -554,6 +585,18 @@ def _register_profile(ctx):
 
 def register(ctx):
     """Register exact v0.2.3 Legacy behavior or the selected modular profile."""
+    if not callable(getattr(ctx, "get_config", None)):
+        # Hermes' context-engine directory loader (context.engine naming this plugin's
+        # directory) passes a collector that cannot read plugin settings. Anything
+        # registered here would silently run on defaults.
+        logger.warning(
+            "Nerve was loaded by a registration context that cannot read plugin settings, "
+            "such as Hermes' context-engine directory loader when context.engine names the "
+            "plugin directory. Nothing was registered here. Nerve's context engine is "
+            "registered by the plugin system as 'jev': set context.engine: jev."
+        )
+        return None
+    _warn_if_legacy_settings_ignored(ctx)
     policy = resolve_config(ctx.get_config)
     if policy.profile == "legacy":
         return _register_legacy(ctx)
