@@ -6,8 +6,10 @@ from unittest.mock import patch
 
 from hermes_nerve import nervous
 from hermes_nerve.progress_integrity import (
+    change_required,
     mutation_is_relevant,
     requested_paths,
+    test_succeeded,
     tool_kind,
 )
 from tests.test_nervous import ScriptedEngine
@@ -30,6 +32,28 @@ class ProgressIntegrityQolTests(unittest.TestCase):
                 targets,
             )
         )
+
+    def test_common_change_verbs_activate_progress_guard(self):
+        for verb in ("Add", "Create", "Remove", "Delete", "Rename", "Change", "Replace"):
+            with self.subTest(verb=verb):
+                self.assertTrue(change_required(f"{verb} src/parser.py"))
+
+    def test_terminal_mutation_paths_can_be_task_relevant(self):
+        targets = requested_paths("Fix src/parser.py")
+        cases = [
+            ("sed -i 's/old/new/' src/parser.py", True),
+            ("printf 'x' > src/parser.py", True),
+            ("rm src/parser.py", True),
+            ("cp src/other.py src/parser.py", True),
+            ("sed -i 's/old/new/' scratch.py", False),
+        ]
+        for command, expected in cases:
+            with self.subTest(command=command):
+                self.assertEqual(mutation_is_relevant("terminal", {"command": command}, targets), expected)
+
+    def test_successful_zero_failure_summary_is_not_rejected(self):
+        self.assertTrue(test_succeeded("ok", "12 passed, 0 failed, 0 errors", "", 0))
+        self.assertFalse(test_succeeded("ok", "11 passed, 1 failed", "", 1))
 
     def test_scratch_mutation_does_not_clear_progress_stall(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
@@ -73,9 +97,20 @@ class ProgressIntegrityQolTests(unittest.TestCase):
             self.assertEqual(state["mutation_attempts"], 1)
             self.assertEqual(state["relevant_mutation_attempts"], 0)
             self.assertIsNotNone(state["active_control"])
+            # Challenge first, then allow a bounded recovery window before hard blocking.
+            for index in range(3):
+                self.assertIsNone(system.before_tool_call(
+                    tool_name="read_file", args={"path": f"grace-{index}.py"},
+                    session_id="s1", turn_id="t1", tool_call_id=f"grace-pre-{index}",
+                ))
+                system.observe_tool_call(
+                    tool_name="read_file", args={"path": f"grace-{index}.py"},
+                    status="ok", result="content", error_message="",
+                    tool_call_id=f"grace-{index}", session_id="s1", turn_id="t1",
+                )
             blocked = system.before_tool_call(
                 tool_name="read_file", args={"path": "another.py"},
-                session_id="s1", turn_id="t1", tool_call_id="read-after-scratch",
+                session_id="s1", turn_id="t1", tool_call_id="read-after-grace",
             )
             self.assertEqual(blocked["action"], "block")
 
