@@ -193,7 +193,7 @@ class NerveContextEngine(ContextEngine):
                 protect_last_n=max(self.protect_last_n, 6),
                 quiet_mode=True,
                 base_url=self._route.get("base_url", ""),
-                [REDACTED]("api_key", ""),
+                api_key=self._route.get("api_key", ""),
                 config_context_length=self.context_length or None,
                 provider=self._route.get("provider", ""),
                 api_mode=self._route.get("api_mode", ""),
@@ -203,7 +203,7 @@ class NerveContextEngine(ContextEngine):
                     self._fallback.update_model(
                         self._model, self.context_length,
                         base_url=self._route.get("base_url", ""),
-                        [REDACTED]("api_key", ""),
+                        api_key=self._route.get("api_key", ""),
                         provider=self._route.get("provider", ""),
                         api_mode=self._route.get("api_mode", ""),
                     )

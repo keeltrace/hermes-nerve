@@ -599,6 +599,7 @@ def _safe_command_from_description(description: str) -> list[str] | None:
                 return parts
     return None
 
+
 def _run(parts: list[str], workspace: str, timeout: int = 180) -> tuple[int, str]:
     try:
         p = subprocess.run(parts, cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout, check=False)
