@@ -60,7 +60,7 @@ def configure(*, mode: Any = None, min_confidence: Any = None, min_allow_probabi
     global _configured_mode, _configured_min_confidence, _configured_min_allow_probability, _configured_scope
 
     raw_mode = str(mode if mode is not None else "off").strip().lower()
-    _configured_mode = raw_mode if raw_mode in {"off", "advisory", "enforce"} else "off"
+    _configured_mode = raw_mode if raw_mode in {"off", "advisory", "enforce", "ask-only"} else "off"
     try:
         threshold = float(0.80 if min_confidence is None else min_confidence)
     except (TypeError, ValueError):
@@ -81,7 +81,7 @@ def gate_mode() -> str:
     if _configured_mode is not None:
         return _configured_mode
     mode = os.getenv("HERMES_NERVE_GATE_MODE", "off").strip().lower()
-    return mode if mode in {"off", "advisory", "enforce"} else "off"
+    return mode if mode in {"off", "advisory", "enforce", "ask-only"} else "off"
 
 
 def gate_scope() -> str:
@@ -307,8 +307,9 @@ def pre_tool_call(tool_name: str, args: dict, task_id: str | None = None, **kwar
     except Exception:
         _record_gate_event(tool_name=tool_name, action="provider-error", reason="provider-unavailable", provider_call=True, **correlation)
         # A remote classifier must never silently become a single point of failure.
-        # Advisory fails open; enforce fails toward HUMAN approval, not execution or hard block.
-        if mode == "enforce":
+        # Advisory fails open; enforce and ask-only fail toward HUMAN approval, not
+        # execution or hard block.
+        if mode in {"enforce", "ask-only"}:
             return {
                 "action": "approve",
                 "message": "Nerve could not obtain a decision; human approval is required (fail-to-human).",
@@ -340,6 +341,17 @@ def pre_tool_call(tool_name: str, args: dict, task_id: str | None = None, **kwar
             "rule_key": "nerve:low-confidence",
         }
     if result.value == "BLOCK":
+        # Ask-only enforce variant: a single classifier call is a better second
+        # opinion that escalates to a human than a hard blocker. The verdict,
+        # confidence, and full distribution are already in the gate event above,
+        # so an operator can count near-blocks by filtering evaluated rows on
+        # value=BLOCK under mode=ask-only.
+        if mode == "ask-only":
+            return {
+                "action": "approve",
+                "message": f"Nerve verdict is BLOCK ({result.confidence:.3f} confidence); human approval required (ask-only mode).",
+                "rule_key": "nerve:block-escalated",
+            }
         return {
             "action": "block",
             "message": f"Blocked by Nerve ({result.confidence:.3f} confidence).",

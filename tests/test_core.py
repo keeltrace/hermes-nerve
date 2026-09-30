@@ -566,6 +566,48 @@ class GateTests(unittest.TestCase):
                 gate.evaluate_tool_call = original
             self.assertEqual(decision["action"], "approve")
 
+    def test_ask_only_block_escalates_to_human(self):
+        with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
+            original = gate.evaluate_tool_call
+            gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult("BLOCK", 0.95, {"BLOCK": 0.95}, "jev-test", 1.0, "x")
+            try:
+                decision = gate.pre_tool_call("terminal", {"command": "rm -rf ~"}, "t")
+            finally:
+                gate.evaluate_tool_call = original
+            self.assertEqual(decision["action"], "approve")
+            self.assertEqual(decision["rule_key"], "nerve:block-escalated")
+
+    def test_ask_only_enforce_paths_still_gate_allow(self):
+        with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
+            original = gate.evaluate_tool_call
+            gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult("ALLOW", 0.95, {"ALLOW": 0.50, "APPROVAL": 0.50}, "jev-test", 1.0, "x")
+            try:
+                gated = gate.pre_tool_call("terminal", {"command": "echo hi"}, "t")
+                gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult("ALLOW", 0.95, {"ALLOW": 0.97, "APPROVAL": 0.03}, "jev-test", 1.0, "x")
+                passed = gate.pre_tool_call("terminal", {"command": "echo hi"}, "t")
+            finally:
+                gate.evaluate_tool_call = original
+            self.assertEqual(gated["action"], "approve")
+            self.assertEqual(gated["rule_key"], "nerve:low-allow-probability")
+            self.assertIsNone(passed)
+
+    def test_ask_only_provider_failure_fails_to_human(self):
+        with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
+            original = gate.evaluate_tool_call
+            gate.evaluate_tool_call = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("down"))
+            try:
+                decision = gate.pre_tool_call("terminal", {}, "t")
+            finally:
+                gate.evaluate_tool_call = original
+            self.assertEqual(decision["action"], "approve")
+            self.assertEqual(decision["rule_key"], "nerve:provider-unavailable")
+
+    def test_gate_mode_env_rejects_unknown_values(self):
+        with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "enforcebutblockless"}, clear=False):
+            self.assertEqual(gate.gate_mode(), "off")
+        with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
+            self.assertEqual(gate.gate_mode(), "ask-only")
+
     def test_enforce_low_allow_probability_goes_to_human_even_when_confident(self):
         # Labeled-replay shape (keeltrace/hermes-nerve#19): a dangerous call that
         # reaches an ALLOW verdict with high calibration confidence but a
