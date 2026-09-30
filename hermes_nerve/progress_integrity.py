@@ -7,10 +7,11 @@ with task-relative progress.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import PurePosixPath
 from typing import Any
 
-CHANGE_REQUIRED_RE = re.compile(r"\b(?:fix|implement|modify|patch|repair|refactor|edit|update)\b", re.IGNORECASE)
+CHANGE_REQUIRED_RE = re.compile(r"\b(?:fix|implement|modify|patch|repair|refactor|edit|update|add|create|remove|delete|rename|change|replace)\b", re.IGNORECASE)
 VERIFY_REQUIRED_RE = re.compile(r"\b(?:test|tests|verify|verification|regression|check)\b", re.IGNORECASE)
 PATH_RE = re.compile(r"(?<![\w.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9]{1,12})(?![\w.-])")
 
@@ -27,6 +28,7 @@ TOOL_ALIASES: dict[str, frozenset[str]] = {
 
 TERMINAL_MUTATION_PREFIXES = (
     "git apply", "apply_patch", "sed -i", "perl -pi", "tee ", "touch ", "mv ", "cp ",
+    "rm ", "rm -", "unlink ", "mkdir ", "rmdir ",
 )
 TERMINAL_TEST_PREFIXES = (
     "pytest", "python -m pytest", "python3 -m pytest", "python -m unittest",
@@ -93,6 +95,30 @@ def mutation_paths(tool_name: str, args: dict[str, Any] | None = None) -> tuple[
             path = _normalize_path(raw)
             if path and path not in paths:
                 paths.append(path)
+    if str(tool_name or "").strip().lower() == "terminal":
+        command = str(args.get("command") or "")
+        # Redirection provides an explicit write target.
+        for raw in re.findall(r"(?<![0-9&])>{1,2}\s*([^\s;&|]+)", command):
+            path = _normalize_path(raw)
+            if path and path not in paths:
+                paths.append(path)
+        # Known mutation commands carry path operands even when the terminal tool
+        # exposes only a command string. Ignore flags and non-path script tokens.
+        for segment in _shell_segments(command):
+            try:
+                tokens = shlex.split(segment)
+            except ValueError:
+                continue
+            lowered = " ".join(token.lower() for token in tokens)
+            if not any(lowered == prefix.strip() or lowered.startswith(prefix) for prefix in TERMINAL_MUTATION_PREFIXES):
+                continue
+            for raw in tokens[1:]:
+                if not raw or raw.startswith("-"):
+                    continue
+                if "/" in raw or "\\" in raw or re.search(r"\.[A-Za-z0-9]{1,12}$", raw):
+                    path = _normalize_path(raw)
+                    if path and path not in paths:
+                        paths.append(path)
     return tuple(paths[:32])
 
 
@@ -121,11 +147,21 @@ def changed_paths_relevant(changed_paths: list[str] | tuple[str, ...], requested
     return any(not _looks_like_scratch(path) for path in normalized)
 
 
-def test_succeeded(status: str, result: str = "", error_message: str = "") -> bool:
+def test_succeeded(
+    status: str, result: str = "", error_message: str = "", exit_code: int | None = None
+) -> bool:
     if str(status or "").strip().lower() not in {"ok", "success", "passed", "pass"}:
         return False
+    if exit_code not in {None, 0}:
+        return False
     text = f"{result} {error_message}".lower()
-    return not any(token in text for token in ("failed", "failure", "error", "traceback"))
+    if "traceback (most recent call last)" in text:
+        return False
+    if re.search(r"\b[1-9][0-9]*\s+(?:failed|failures|errors?)\b", text):
+        return False
+    if re.search(r"\b(?:failed|failures|errors?)\s*[:=]\s*[1-9][0-9]*\b", text):
+        return False
+    return True
 
 
 def _normalize_path(value: str) -> str:
