@@ -18,7 +18,7 @@ The matrix is not another plugin-vs-no-plugin benchmark. Dev16 already establish
 - Persist result rows after every arm; interrupted runs remain analyzable.
 - Use process-safe Python cleanup rather than shell trap variables that can be clobbered by loop variables.
 - Reap a worker that remains alive after the board reaches a terminal state.
-- Keep the independent harness emergency primary-token ceiling separate from Nerve orchestrator-review handoffs.
+- Keep the independent harness emergency primary[REDACTED] separate from Nerve orchestrator-review handoffs.
 - Classify outcomes as `SUCCESS`, `VERIFICATION_FAIL`, `IMPLEMENTATION_FAIL`, `LIFECYCLE_FAIL`, `ORCH_REVIEW`, legacy `NERVE_KILL`, or `HARNESS_KILL`.
 - Emit success rate, median/max combined tokens, and matched backend comparisons rather than relying on averages.
 - The offline release verifier explicitly marks fake headless binding as not-applicable instead of producing a live-run warning.
@@ -86,6 +86,8 @@ OpenJev weights are CC BY-NC 4.0. The helper/serve code is Apache-2.0. Nerve dev
 ~/.hermes/hermes-agent/venv/bin/python scripts/configure_reflex_profile.py PROFILE --backend laya
 ~/.hermes/hermes-agent/venv/bin/python scripts/configure_reflex_profile.py PROFILE --backend openjev
 ```
+
+The script writes `plugins.entries.nerve.settings`: `--backend` plus only the options you pass. Settings you omit keep their current values. Settings with no value anywhere use Nerve's defaults and `HERMES_REFLEX_*` environment fallbacks when the plugin loads. Pass an option explicitly, for example `--laya-base-url` or `--openjev-expected-identity`, to change it.
 
 Shadow mode keeps hosted Jev authoritative while recording a selected open backend:
 
