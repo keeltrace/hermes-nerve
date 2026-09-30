@@ -202,7 +202,7 @@ For selected profiles, disabled modules are omitted from the Hermes model/runtim
 
 ### Shared Context
 
-Shared Context is an optional external integration. Nerve does **not** vendor HermesContextBus. Fat Cat and Operator enable the module by default; Lean and Marie Kondo keep it off pending factory A/B evidence.
+Shared Context is an optional external integration. Nerve does **not** vendor HermesContextBus. Because HermesContextBus is not currently published through a public install source, Shared Context is OFF by default in all named profiles. Users with an explicit local HermesContextBus checkout can opt in and install it manually.
 
 To inspect integration availability:
 
