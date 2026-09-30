@@ -18,7 +18,7 @@ The invariant is simple:
 - correct `LOCAL_ONLY` provenance for Laya decisions;
 - exact sidecar-model identity checking;
 - optional `laya==0.3.5` dependency extra without adding torch/transformers to the core Hermes plugin;
-- `nerve_stats section=reflex` diagnostics;
+- local paired shadow report (`hermes_nerve.reflex.telemetry.report`; see Shadow telemetry);
 - compatibility aliasing for `work_estimated_jev_call_tokens` while introducing the provider-neutral `work_estimated_decision_call_tokens` key.
 
 ## Architecture
@@ -59,7 +59,7 @@ Existing behavior. This is the default so merging dev15b does not silently alter
 ```yaml
 plugins:
   entries:
-    hermes-nerve:
+    nerve:
       settings:
         reflex_backend: jev
 ```
@@ -72,7 +72,7 @@ Laya failures never change the returned Jev result.
 ```yaml
 plugins:
   entries:
-    hermes-nerve:
+    nerve:
       settings:
         reflex_backend: shadow
         reflex_laya_base_url: http://127.0.0.1:8765
@@ -101,7 +101,7 @@ Laya is authoritative for semantic `DecisionEngine` calls.
 ```yaml
 plugins:
   entries:
-    hermes-nerve:
+    nerve:
       settings:
         reflex_backend: laya
         reflex_laya_base_url: http://127.0.0.1:8765
@@ -208,21 +208,22 @@ The semantic backend is only used where the existing `DecisionEngine` was alread
 
 ## Shadow telemetry
 
-Inspect from Hermes:
+`nerve_stats` has no `reflex` section; earlier versions of this guide referred to one that the tool never served. Read the paired shadow report locally instead, from the plugin directory and with the same `HERMES_HOME` the agent uses:
 
-```text
-nerve_stats {"section":"reflex","include_recent":true,"recent_limit":5}
+```bash
+python3 -c 'import json; from hermes_nerve.reflex.telemetry import report; print(json.dumps(report(recent_limit=5), indent=2))'
 ```
 
-The report includes:
+The report reads `$HERMES_HOME/reflex/shadow.jsonl`, the default location when `reflex_shadow_log` is unset. It includes:
 
-- configured backend (with sidecar token redacted);
 - shadow record count;
 - paired answer count;
 - agreement/disagreement count and rate;
 - per-question agreement counts;
 - shadow errors;
 - bounded recent records.
+
+Recent records and errors can contain endpoint URLs and pinned identities, so read the report locally rather than through a model tool result.
 
 Shadow telemetry is measurement, not ground truth. A disagreement means only that Jev and Laya chose different answers.
 
