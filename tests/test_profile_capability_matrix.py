@@ -51,12 +51,12 @@ def load_plugin(tag: str):
 EXPECTED_ON = {
     "fat_cat": {
         "reflex", "nervous", "work_supervision", "token_trajectory",
-        "action_gate", "context_governor", "remote_workers", "shared_context",
+        "action_gate", "context_governor", "remote_workers",
         "assistant_loops", "assistant_audit", "receipts", "local_learning",
     },
     "operator": {
         "reflex", "nervous", "action_gate", "context_governor",
-        "shared_context", "receipts", "local_learning",
+        "receipts", "local_learning",
     },
     "lean": {"reflex", "nervous", "work_supervision", "token_trajectory", "receipts"},
     "marie_kondo": {"reflex", "work_supervision", "token_trajectory", "receipts"},
