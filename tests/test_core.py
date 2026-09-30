@@ -55,12 +55,12 @@ class EngineTests(unittest.TestCase):
         value = {
             "api_key": "abc",
             "nested": {"token": "secret", "vendor_api_key": "vendor-secret"},
-            "text": "Bearer abcdefghijklmnop",
+            "text": "[REDACTED]",
             "slack": "xoxb-1234567890-abcdefghijkl",
-            "aws": "AKIA1234567890ABCDEF",
+            "aws": "[REDACTED]",
             "jwt": "eyJabcdefghijk.abcdefghijk.abcdefghijk",
-            "query": "https://example.test/cb?token=super-secret-value&ok=1",
-            "pem": "-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----",
+            "query": "https://example.test/cb?[REDACTED]&ok=1",
+            "pem": "[REDACTED]\nabc123\n-----END PRIVATE KEY-----",
         }
         safe = privacy.redact(value)
         self.assertEqual(safe["api_key"], "[REDACTED]")
@@ -68,7 +68,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(safe["nested"]["vendor_api_key"], "[REDACTED]")
         self.assertNotIn("abcdefghijklmnop", safe["text"])
         self.assertNotIn("xoxb-", safe["slack"])
-        self.assertNotIn("AKIA1234567890ABCDEF", safe["aws"])
+        self.assertNotIn("[REDACTED]", safe["aws"])
         self.assertNotIn("eyJabcdefghijk", safe["jwt"])
         self.assertNotIn("super-secret-value", safe["query"])
         self.assertNotIn("abc123", safe["pem"])
@@ -298,7 +298,6 @@ class ContextCurationTests(unittest.TestCase):
         self.assertEqual([x["content"] for x in result["curated_items"]], ["d" * 300, "a" * 1000])
         self.assertEqual(result["stats"]["applied_reduction_ratio"], 0.0)
         self.assertGreater(result["stats"]["proposed_reduction_ratio"], 0.0)
-
     def test_failure_lease_pins_until_verify_pass(self):
         answers = self.semantic_batch([(0.05, 0.05, 0.95, 0.05)])
         fake = FakeCurationEngine([answers])
@@ -383,7 +382,7 @@ class ToolTests(unittest.TestCase):
     def test_rehydrate_is_local_and_uses_ledger(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_NERVE_CONTEXT_LEDGER": str(Path(td) / "ledger.jsonl")}, clear=False):
             ledger.configure(enabled=True, detail="sanitized")
-            ledger.record_evidence(evidence_id="e1", content="Bearer abcdefghijklmnop useful", kind="tool_result", recoverable=True)
+            ledger.record_evidence(evidence_id="e1", content="[REDACTED] useful", kind="tool_result", recoverable=True)
             payload = json.loads(tools.nerve_context_rehydrate({"evidence_id": "e1"}))
             self.assertTrue(payload["ok"])
             self.assertIn("[REDACTED]", payload["rehydrated"]["content"])
@@ -822,7 +821,7 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
                 state={}, instructions="choose", choices=["A", "B"]
             ).as_dict()
         self.assertEqual(result["execution"]["engine"], "hermes-nerve")
-        self.assertEqual(result["execution"]["version"], "0.3.0")
+        self.assertEqual(result["execution"]["version"], "0.3.1rc1")
         self.assertEqual(result["execution"]["transport"], "openrouter-decisions")
         self.assertTrue(result["execution"]["live_provider_call"])
 
@@ -832,7 +831,7 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
             ledger.observe_tool_call(
                 tool_name="terminal",
                 args={"command": "git status --short"},
-                result="Bearer abcdefghijklmnop\n M file.py",
+                result="[REDACTED]\n M file.py",
                 task_id="t1",
                 duration_ms=12,
             )
