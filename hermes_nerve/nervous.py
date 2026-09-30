@@ -811,7 +811,9 @@ class NervousSystem:
                     state.mutation_attempts += 1
                     if mutation_is_relevant(tool_name, args, state.requested_paths):
                         state.relevant_mutation_attempts += 1
-                elif kind == "test" and test_succeeded(status, result, error_message):
+                elif kind == "test" and test_succeeded(
+                    status, result, error_message, kwargs.get("exit_code", kwargs.get("returncode"))
+                ):
                     state.verified_test_passes += 1
                 if (
                     state.change_required
@@ -941,6 +943,9 @@ class NervousSystem:
                         "proposed_action_fingerprint": proposed_fp,
                         "requested_paths": list(state.requested_paths),
                     })
+                    return None
+                if state.tool_actions < _PROGRESS_BLOCK_AFTER:
+                    self._metrics["progress_stall_grace_calls"] += 1
                     return None
                 directive.attempted_overrides += 1
                 self._metrics["control_override_attempts"] += 1
@@ -1478,6 +1483,7 @@ class NervousSystem:
             "deterministic_failure_replans": int(m.get("deterministic_failure_replans", 0)),
             "progress_stall_replans": int(m.get("progress_stall_replans", 0)),
             "progress_stall_prevented_calls": int(m.get("progress_stall_prevented_calls", 0)),
+            "progress_stall_grace_calls": int(m.get("progress_stall_grace_calls", 0)),
             "progress_irrelevant_mutations": int(m.get("progress_irrelevant_mutations", 0)),
             "progress_false_completion_prevented": int(m.get("progress_false_completion_prevented", 0)),
             "jev_calls_per_turn": round(calls / turns, 4) if turns else 0.0,
