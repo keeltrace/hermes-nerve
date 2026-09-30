@@ -1,6 +1,6 @@
 # Nerve
 
-Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.0` is the profile-aware modular release: it adds Nerve setup personalities, hard-OFF module semantics, Assistant Accountability, optional Shared Context integration, profile/runtime truthfulness, stronger persistence and path trust boundaries, and release/package hardening while preserving v0.2.3-compatible Legacy behavior when no profile is selected. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
+Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.1rc1` is the bugfix, hardening, and QOL release candidate on top of the profile-aware `0.3.0` release: it adds Nerve setup personalities, hard-OFF module semantics, Assistant Accountability, optional Shared Context integration, profile/runtime truthfulness, stronger persistence and path trust boundaries, and release/package hardening while preserving v0.2.3-compatible Legacy behavior when no profile is selected. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
 
 
 ## Dev17 — open backend release matrix
@@ -107,7 +107,7 @@ Nerve deliberately does **not** own canonical task status, dependencies, retries
 From the extracted final package:
 
 ```bash
-cd nerve-v0.3.0
+cd nerve-v0.3.1rc1
 bash scripts/install_dev17_profile.sh abtest-jev-dev17
 ```
 
