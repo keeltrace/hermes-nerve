@@ -31,7 +31,6 @@ from .engine import DecisionEngine
 from .jsonl import append_jsonl
 from .outcomes import HistoricalOutcomeModel, OutcomeStore
 from .paths import hermes_home
-from .policy_memory import PolicyMemory, tool_wide_policy_reason
 from .privacy import canonical_hash, redact
 from .provenance import execution_provenance
 from .router import (
@@ -89,9 +88,6 @@ class NervousConfig:
     local_learning: bool = True
     local_learning_min_samples: int = 8
     repeated_failure_local_replan_at: int = 3
-    policy_memory_enabled: bool = True
-    policy_memory_ttl_seconds: int = 3600
-    policy_memory_path: str = ""
 
 
 @dataclass
@@ -217,7 +213,6 @@ class NervousSystem:
         self._recent_controls: deque[dict[str, Any]] = deque(maxlen=30)
         self._outcomes = OutcomeStore()
         self._historical_model = HistoricalOutcomeModel(self._outcomes, self._config.local_learning_min_samples)
-        self._policy_memory: PolicyMemory | None = None
 
     def configure(self, **kwargs: Any) -> None:
         with self._lock:
@@ -252,8 +247,7 @@ class NervousSystem:
                     pass
             if "emit_prompt_hint" in kwargs:
                 cfg.emit_prompt_hint = bool(kwargs["emit_prompt_hint"])
-            if "local_learning" in kwargs:
-                cfg.local_learning = bool(kwargs["local_learning"])
+            if "local_learning" in kwargs:                cfg.local_learning = bool(kwargs["local_learning"])
             if "local_learning_min_samples" in kwargs:
                 try:
                     cfg.local_learning_min_samples = max(3, min(1000, int(kwargs["local_learning_min_samples"])))
@@ -264,24 +258,7 @@ class NervousSystem:
                     cfg.repeated_failure_local_replan_at = max(2, min(20, int(kwargs["repeated_failure_local_replan_at"])))
                 except (TypeError, ValueError):
                     pass
-            if "policy_memory_enabled" in kwargs:
-                cfg.policy_memory_enabled = bool(kwargs["policy_memory_enabled"])
-            if "policy_memory_ttl_seconds" in kwargs:
-                try:
-                    cfg.policy_memory_ttl_seconds = max(0, min(86400, int(kwargs["policy_memory_ttl_seconds"])))
-                except (TypeError, ValueError):
-                    pass
-            if "policy_memory_path" in kwargs:
-                cfg.policy_memory_path = str(kwargs["policy_memory_path"] or "").strip()
             self._historical_model = HistoricalOutcomeModel(self._outcomes, cfg.local_learning_min_samples)
-            self._policy_memory = (
-                PolicyMemory(
-                    path=Path(cfg.policy_memory_path).expanduser() if cfg.policy_memory_path else None,
-                    ttl_seconds=cfg.policy_memory_ttl_seconds,
-                )
-                if cfg.enabled and cfg.policy_memory_enabled
-                else None
-            )
         if self._config.enabled:
             self._ensure_worker()
         else:
@@ -297,7 +274,8 @@ class NervousSystem:
             self._worker.start()
 
     def _stop_worker(self) -> None:
-        with self._lock:            self._stopping = True
+        with self._lock:
+            self._stopping = True
             worker = self._worker
         if worker and worker is not threading.current_thread():
             worker.join(timeout=0.5)
@@ -518,8 +496,7 @@ class NervousSystem:
         self._metrics["control_replan"] += 1
         self._outcomes.append({
             "record_type": "decision",
-            "decision_id": decision_id,
-            "turn_id": state.turn_id,
+            "decision_id": decision_id,            "turn_id": state.turn_id,
             "event_id": episode.last_event_id,
             "decision_type": decision_type,
             "hermes_decision": "RETRY_SAME_ACTION",
@@ -596,7 +573,8 @@ class NervousSystem:
         clean.setdefault("origin_event_type", clean["type"])
         clean.setdefault("origin_event_id", clean["event_id"])
         origin_tool = str(clean.get("origin_tool") or "").strip().lower()
-        if origin_tool.startswith(("nerve_", "jev_")):            clean["suppress_remote"] = True
+        if origin_tool.startswith(("nerve_", "jev_")):
+            clean["suppress_remote"] = True
             clean["suppress_reason"] = "nerve-internal"
             with self._lock:
                 self._metrics["nerve_internal_seen"] += 1
@@ -745,18 +723,16 @@ class NervousSystem:
         risk, risk_reasons = infer_tool_risk(tool_name, status)
         result = str(kwargs.get("result") or "")
         error_message = str(kwargs.get("error_message") or "")
-        policy_memory_prevented = "[NERVE_POLICY_MEMORY]" in (result + " " + error_message)
-        is_failure = (status.lower() in {"error", "failed", "blocked", "failure"} or bool(error_message)) and not policy_memory_prevented
-        contradiction = (not policy_memory_prevented) and any(token in (result + " " + error_message).lower() for token in (
+        is_failure = status.lower() in {"error", "failed", "blocked", "failure"} or bool(error_message)
+        contradiction = any(token in (result + " " + error_message).lower() for token in (
             "unexpected", "contradict", "mismatch", "failed", "failure", "error", "not found", "denied"
         ))
-        event_type = "POLICY_MEMORY_BLOCK" if policy_memory_prevented else ("FAILURE" if is_failure else "TOOL_RESULT")
+        event_type = "FAILURE" if is_failure else "TOOL_RESULT"
         event_id = str(kwargs.get("tool_call_id") or uuid.uuid4().hex)
         action_fp = tool_action_fingerprint(tool_name, args)
         fail_fp = ""
         repeat_count = 0
         deterministic_reason = _deterministic_failure_reason(status, result, error_message) if is_failure else ""
-        policy_memory_reason = tool_wide_policy_reason(tool_name, status, result, error_message) if is_failure else ""
         state = self._resolve_turn(turn_id=str(kwargs.get("turn_id") or ""), session_id=str(kwargs.get("session_id") or ""))
         if is_failure and state is not None:
             exit_code = kwargs.get("exit_code", kwargs.get("returncode"))
@@ -769,8 +745,7 @@ class NervousSystem:
                 exit_code=exit_code,
             )
             with self._lock:
-                episode = state.failure_episodes.get(fail_fp)
-                if episode is None:
+                episode = state.failure_episodes.get(fail_fp)                if episode is None:
                     episode = FailureEpisode(
                         fingerprint=fail_fp,
                         action_fingerprint=action_fp,
@@ -787,15 +762,6 @@ class NervousSystem:
                     self._activate_deterministic_failure_replan(state, episode, deterministic_reason)
                 elif repeat_count >= self._config.repeated_failure_local_replan_at:
                     self._activate_local_loop_breaker(state, episode)
-            if policy_memory_reason and repeat_count == 1 and self._policy_memory is not None:
-                remembered = self._policy_memory.remember(
-                    tool_name=tool_name,
-                    reason=policy_memory_reason,
-                    evidence_fingerprint=fail_fp or action_fp,
-                )
-                if remembered is not None:
-                    with self._lock:
-                        self._metrics["policy_memory_records"] += 1
             if repeat_count >= 2:
                 event_type = "REPEATED_FAILURE"
 
@@ -833,10 +799,7 @@ class NervousSystem:
         # change a policy/schema/path result, so avoid spending a provider call on it.
         # Other first failures remain eligible for remote assessment; exact repeats
         # are intentionally local until state/evidence changes.
-        if policy_memory_prevented:
-            event["suppress_remote"] = True
-            event["suppress_reason"] = "policy-memory-prevented-before-execution"
-        elif deterministic_reason:
+        if deterministic_reason:
             event["suppress_remote"] = True
             event["suppress_reason"] = "deterministic-failure-local-replan"
         elif repeat_count >= 2:
@@ -845,84 +808,66 @@ class NervousSystem:
         return self.emit_event(event)
 
     def before_tool_call(self, **kwargs: Any) -> dict[str, Any] | None:
-        """Enforce active controls and remembered runtime-wide policy blocks."""
+        """Local control-lease enforcement at Hermes' pre-tool execution seam.
+
+        No provider call occurs here. This is the piece v0.2.0 lacked: a remote
+        REPLAN/GATHER_EVIDENCE decision can now constrain the next exact action,
+        and the local repeated-failure breaker works even when Jev is late.
+        """
         if not self._config.enabled or self._config.mode == "shadow":
             return None
         tool_name = str(kwargs.get("tool_name") or "")
-        selected_tool = tool_name.strip().lower()
-        if selected_tool.startswith(("nerve_", "jev_")):
+        if tool_name.startswith(("nerve_", "jev_")):
             return None
         args = kwargs.get("args") if isinstance(kwargs.get("args"), dict) else {}
         state = self._resolve_turn(turn_id=str(kwargs.get("turn_id") or ""), session_id=str(kwargs.get("session_id") or ""))
         if state is None:
             return None
         proposed_fp = tool_action_fingerprint(tool_name, args)
-
-        # Preserve Goal-4 exact-action control semantics first. A materially
-        # different action consumes that lease, but may still be blocked below
-        # when the entire tool is known unavailable in this execution mode.
         with self._lock:
             directive = state.active_control
-            if directive is not None:
-                same_action = bool(directive.action_fingerprint and proposed_fp == directive.action_fingerprint)
-                if not directive.delivered:
-                    directive.delivered = True
-                    self._metrics["controls_delivered"] += 1
-                    self._record_control_lifecycle(state, directive, stage="delivered", disposition="pre-tool")
-                if directive.control == "RETRY":
-                    self._metrics["controls_followed"] += 1
-                    self._record_control_lifecycle(
-                        state, directive, stage="next_action", disposition="followed",
-                        proposed_action_fingerprint=proposed_fp,
-                    )
-                    state.active_control = None
-                elif directive.control in BLOCKING_CONTROLS and same_action:
-                    directive.attempted_overrides += 1
-                    self._metrics["control_override_attempts"] += 1
-                    self._metrics["controls_enforced"] += 1
-                    if directive.failure_fingerprint in state.failure_episodes:
-                        state.failure_episodes[directive.failure_fingerprint].blocked_attempts += 1
-                    self._record_control_lifecycle(
-                        state, directive, stage="next_action", disposition="enforced",
-                        proposed_action_fingerprint=proposed_fp, attempted_override=True,
-                    )
-                    message = (
-                        f"Nerve {directive.control} control {directive.decision_id} prevents repeating the exact action "
-                        "that already failed. Choose a materially different diagnostic/recovery step"
-                        + (" or escalate." if directive.control == "ESCALATE" else ".")
-                    )
-                    self._log("control_enforced", {**directive.as_dict(), "tool_name": tool_name, "proposed_action_fingerprint": proposed_fp})
-                    return {"action": "block", "message": message}
-                else:
-                    self._metrics["controls_followed"] += 1
-                    self._record_control_lifecycle(                        state, directive, stage="next_action", disposition="followed",
-                        proposed_action_fingerprint=proposed_fp,
-                    )
-                    state.active_control = None
+            if directive is None:
+                return None
+            same_action = bool(directive.action_fingerprint and proposed_fp == directive.action_fingerprint)
+            if not directive.delivered:
+                directive.delivered = True
+                self._metrics["controls_delivered"] += 1
+                self._record_control_lifecycle(state, directive, stage="delivered", disposition="pre-tool")
+            if directive.control == "RETRY":
+                self._metrics["controls_followed"] += 1
+                self._record_control_lifecycle(
+                    state, directive, stage="next_action", disposition="followed",
+                    proposed_action_fingerprint=proposed_fp,
+                )
+                state.active_control = None
+                return None
+            if directive.control in BLOCKING_CONTROLS and same_action:
+                directive.attempted_overrides += 1
+                self._metrics["control_override_attempts"] += 1
+                self._metrics["controls_enforced"] += 1
+                if directive.failure_fingerprint in state.failure_episodes:
+                    state.failure_episodes[directive.failure_fingerprint].blocked_attempts += 1
+                self._record_control_lifecycle(
+                    state, directive, stage="next_action", disposition="enforced",
+                    proposed_action_fingerprint=proposed_fp, attempted_override=True,
+                )
+                message = (
+                    f"Nerve {directive.control} control {directive.decision_id} prevents repeating the exact action "
+                    "that already failed. Choose a materially different diagnostic/recovery step"
+                    + (" or escalate." if directive.control == "ESCALATE" else ".")
+                )
+                self._log("control_enforced", {**directive.as_dict(), "tool_name": tool_name, "proposed_action_fingerprint": proposed_fp})
+                return {"action": "block", "message": message}
 
-        memory = self._policy_memory.blocked(selected_tool) if self._policy_memory is not None else None
-        if memory is None:
-            return None
-        with self._lock:
-            self._metrics["policy_memory_prevented_calls"] += 1
-            self._metrics["policy_memory_hits"] += 1
-        self._log(
-            "policy_memory_enforced",
-            {
-                "tool_name": selected_tool,
-                "reason": memory.reason,
-                "evidence_fingerprint": memory.evidence_fingerprint,
-                "expires_at_epoch": memory.expires_at_epoch,
-            },
-        )
-        return {
-            "action": "block",
-            "message": (
-                f"[NERVE_POLICY_MEMORY] Nerve policy memory prevents {tool_name} in this Hermes execution mode because the tool previously "
-                "hit a deterministic unattended-policy block. Use a different allowed tool. The memory expires "
-                "automatically when the execution mode/config changes or its TTL elapses."
-            ),
-        }
+            # Any materially different tool action demonstrates that the replan /
+            # gather-evidence control affected trajectory. Consume the lease.
+            self._metrics["controls_followed"] += 1
+            self._record_control_lifecycle(
+                state, directive, stage="next_action", disposition="followed",
+                proposed_action_fingerprint=proposed_fp,
+            )
+            state.active_control = None
+        return None
 
     def _do_assessment(self, payload: dict[str, Any]) -> None:
         tid = str(payload.get("turn_id") or "")
@@ -1049,8 +994,7 @@ class NervousSystem:
                 challenge = Challenge(
                     challenge_id=uuid.uuid4().hex,
                     decision_id=decision_id,
-                    turn_id=tid,
-                    event_id=str(event.get("event_id") or ""),
+                    turn_id=tid,                    event_id=str(event.get("event_id") or ""),
                     state_version=str(event.get("state_version") or ""),
                     decision_version=str(event.get("decision_version") or ""),
                     hermes_decision=hermes_decision,
@@ -1194,7 +1138,8 @@ class NervousSystem:
     def inject_challenge(self, result: str, *, turn_id: str = "", session_id: str = "") -> str | None:
         challenge = self.pop_challenge(turn_id=turn_id, session_id=session_id)
         if challenge is None or self._config.mode == "shadow":
-            return None        state = self._resolve_turn(turn_id=turn_id, session_id=session_id)
+            return None
+        state = self._resolve_turn(turn_id=turn_id, session_id=session_id)
         if state is not None:
             with self._lock:
                 directive = state.active_control
@@ -1298,8 +1243,7 @@ class NervousSystem:
                 "events_suppressed": state.events_suppressed,
                 "provider_calls": state.provider_calls,
                 "provider_errors": state.provider_errors,
-                "watch_promotions": state.watch_promotions,
-                "pending_challenges": len(state.pending_challenges),
+                "watch_promotions": state.watch_promotions,                "pending_challenges": len(state.pending_challenges),
                 "pending_batch_events": len(state.pending_batch),
                 "failure_episodes": len(state.failure_episodes),
                 "active_control": state.active_control.as_dict() if state.active_control else None,
@@ -1362,9 +1306,6 @@ class NervousSystem:
             "repeated_failures_seen": int(m.get("repeated_failures_seen", 0)),
             "local_loop_breakers": int(m.get("local_loop_breakers", 0)),
             "deterministic_failure_replans": int(m.get("deterministic_failure_replans", 0)),
-            "policy_memory_records": int(m.get("policy_memory_records", 0)),
-            "policy_memory_hits": int(m.get("policy_memory_hits", 0)),
-            "policy_memory_prevented_calls": int(m.get("policy_memory_prevented_calls", 0)),
             "jev_calls_per_turn": round(calls / turns, 4) if turns else 0.0,
             "jev_calls_per_100_events": round(100.0 * calls / events, 4) if events else 0.0,
             "jev_calls_per_meaningful_decision": round(calls / meaningful, 4) if meaningful else 0.0,
@@ -1493,6 +1434,7 @@ def pre_tool_call(**kwargs: Any) -> dict[str, Any] | None:
 
 def post_tool_call(**kwargs: Any) -> None:
     _default.observe_tool_call(**kwargs)
+
 
 def transform_tool_result(**kwargs: Any) -> str | None:
     return _default.inject_challenge(
