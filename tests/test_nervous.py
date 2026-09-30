@@ -247,7 +247,8 @@ class NervousSystemTests(unittest.TestCase):
     def test_deterministic_failure_classifier_boundary_matrix(self):
         deterministic = {
             "policy block": ("error", "BLOCKED: execute_code is not allowed", "", "blocked:"),
-            "permission": ("error", "permission denied; try again with elevated privileges", "", "permission denied"),            "approval": ("error", "approval required before this action", "", "approval required"),
+            "permission": ("error", "permission denied; try again with elevated privileges", "", "permission denied"),
+            "approval": ("error", "approval required before this action", "", "approval required"),
             "invalid arg": ("error", "invalid argument: --mdoe", "", "invalid argument"),
             "unknown option": ("error", "unknown option --mdoe", "", "unknown option"),
             "schema": ("error", "schema validation failed for field x", "", "schema validation"),
@@ -496,7 +497,8 @@ class OutcomeLearningTests(unittest.TestCase):
             store = OutcomeStore(Path(td) / "outcomes.jsonl")
             store.append({"record_type": "decision", "event_id": "local", "source": "local-loop-breaker"})
             store.append({
-                "record_type": "decision", "event_id": "remote", "request_id": "req-2",                "usage": {"input_tokens": 10, "output_tokens": 2},
+                "record_type": "decision", "event_id": "remote", "request_id": "req-2",
+                "usage": {"input_tokens": 10, "output_tokens": 2},
             })
             report = store.report()
             self.assertIsNone(report["provider_cost"])
