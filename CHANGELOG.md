@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1rc1 — bug fixes, hardening, and QOL release candidate
+
+- Fix Nerve settings namespace handling so configuration is read from `plugins.entries.nerve.settings`; warn on the legacy ignored `hermes-nerve` block and preserve omitted profile-script settings instead of overwriting effective values.
+- Harden context-engine registration/loading, unknown-mode fallback, stats truthfulness, ledger session attribution, and worker profile secret-scope propagation.
+- Re-evaluate machine-checkable completion criteria against current repository state so stale PASS verdicts cannot survive deleted files, regressed tests, or newly dirty Git state.
+- Stop deterministic retry loops immediately on policy/permission/schema/path failures while preserving transient retry behavior.
+- Make implementation progress task-relative: scratch/repro edits do not count as completion progress, native mutation aliases such as `patch` are recognized consistently, and requested verification must actually pass before completion.
+- Detect repeated package/virtualenv/test-environment setup failures and force repository-native recovery instead of continuing environment thrash.
+- Release scope is maintenance-only: no Shared Context / issue #39 publication work, no policy-memory feature, no Deep Research Kit feature, and no ask-only gate mode feature are included in this RC.
+
+Verification target: Python 3.10–3.14 CI, release structural verification, plugin validation/doctor, focused completion/retry/progress regressions, and the canonical dev17 release gate.
+
 ## 0.3.0 — profiles, modular runtime, and release hardening
 
 - Add `nerve setup` with Full Configuration, Fat Cat, Operator, Lean, Marie Kondo, Custom, and explicit Legacy behavior.
