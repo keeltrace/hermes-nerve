@@ -2,7 +2,9 @@
 
 Phase 1: state model, modes, resolver, config, temporary exceptions, and
 persistent control-plane/session state independent of compacted summaries.
-No enforcement yet.
+
+Phase 2 additions: observe_response() wires the observe-only validator and
+telemetry counters into the façade.  No enforcement occurs in phase 2.
 
 Modes
 -----
@@ -531,6 +533,9 @@ class LanguageContract:
                 config_snapshot=config.as_dict(),
             )
         )
+        # Phase 2: observe-only validator (lazy import to avoid circular deps)
+        from .language_telemetry import ObserveOnlyValidator  # noqa: PLC0415
+        self._observer: "ObserveOnlyValidator" = ObserveOnlyValidator(self._session_id)
 
     # ------------------------------------------------------------------
     # Read-only properties
@@ -760,13 +765,15 @@ class LanguageContract:
     def reset_session(self, *, persist: bool = True) -> None:
         """Reset language state for a new session (same contract object, new session start).
 
-        Clears resolved language, exceptions, and re-snapshots the current config.
+        Clears resolved language, exceptions, re-snapshots the current config,
+        and resets telemetry counters.
         """
         with self._lock:
             self._state = SessionLanguageState(
                 session_id=self._session_id,
                 config_snapshot=self._config.as_dict(),
             )
+            self._observer.reset()
             if persist:
                 try:
                     save_session_state(self._state, home=self._home)
@@ -775,10 +782,60 @@ class LanguageContract:
                         "Could not persist language contract on session reset: %s", exc
                     )
 
+    # ------------------------------------------------------------------
+    # Phase 2: observe-only validation and telemetry
+    # ------------------------------------------------------------------
+
+    def observe_response(
+        self,
+        *,
+        turn_id: str,
+        assistant_text: str,
+        translation_payload: bool = False,
+    ) -> "Any":
+        """Observe one assistant response for language contract compliance.
+
+        This is **observe-only** — no enforcement, no blocking.  The resolved
+        contract language for *turn_id* is taken from the current session state
+        (i.e. call ``record_turn`` for the user side first, then call this).
+
+        Parameters
+        ----------
+        turn_id : str
+            Opaque turn identifier.
+        assistant_text : str
+            Full text of the assistant response to observe.
+        translation_payload : bool
+            If ``True``, marks the entire response as a translation payload
+            (fully exempt from language detection).
+
+        Returns
+        -------
+        TurnObservation
+            The observation record.  Inspect ``result`` for the outcome.
+            ``"mismatch"`` is informational only in phase 2.
+        """
+        with self._lock:
+            contract_lang = self.resolved_language  # already thread-safe via property
+            mode = self._config.mode
+        return self._observer.observe(
+            turn_id=turn_id,
+            assistant_text=assistant_text,
+            contract_language=contract_lang,
+            contract_mode=mode,
+            translation_payload=translation_payload,
+        )
+
+    @property
+    def telemetry(self) -> "Any":
+        """Current session language telemetry counters (LanguageTelemetry)."""
+        return self._observer.telemetry
+
     def as_dict(self) -> dict[str, Any]:
         """Snapshot of the full contract state for diagnostics."""
         with self._lock:
             return {
                 "config": self._config.as_dict(),
                 "session_state": self._state.as_dict(),
+                "telemetry": self._observer.telemetry.as_dict(),
             }
