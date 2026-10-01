@@ -1,5 +1,7 @@
 # Nerve
 
+> **Development status:** current `main` identifies as `0.3.2.dev0`. It is the post-0.3.0 development line and includes the ask-only gate work plus maintenance fixes merged after the separate `v0.3.1rc1` cut. The published `v0.3.1rc1` is an immutable maintenance-only release candidate and intentionally excludes ask-only; it is not the same tree as current `main`. The latest stable release remains `v0.3.0` until a later release is promoted, and the public Hermes catalog entry intentionally stays pinned to `0.3.0` while `main` carries a `.dev` version.
+
 Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.0` is the profile-aware modular release: it adds Nerve setup personalities, hard-OFF module semantics, Assistant Accountability, optional Shared Context integration, profile/runtime truthfulness, stronger persistence and path trust boundaries, and release/package hardening while preserving v0.2.3-compatible Legacy behavior when no profile is selected. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
 
 

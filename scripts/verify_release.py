@@ -17,7 +17,8 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
  sys.path.insert(0,str(ROOT))
-EXPECTED="0.3.0"
+EXPECTED="0.3.2.dev0"
+CATALOG_EXPECTED="0.3.0"
 EXPECTED_TOOLS={
  "nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_stats","nerve_nervous_event",
  "nerve_supervise_card","nerve_work_event","nerve_work_status","nerve_remote_delegate_task","nerve_remote_worker_status","nerve_remote_worker_result","nerve_remote_worker_cancel","nerve_remote_worker_control",
@@ -47,7 +48,7 @@ def main():
  assert plugin_version()==EXPECTED
  from hermes_nerve.provenance import VERSION
  assert VERSION==EXPECTED
- assert catalog_version()==EXPECTED, (catalog_version(), EXPECTED)
+ assert catalog_version()==CATALOG_EXPECTED, (catalog_version(), CATALOG_EXPECTED)
  assert py["project"]["dependencies"]==[],"core plugin must remain dependency-free"
  assert py["project"]["optional-dependencies"]["laya"]==["laya==0.3.3"]
  from hermes_nerve.cli import _advanced_catalog

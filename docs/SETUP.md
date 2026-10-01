@@ -1,4 +1,4 @@
-# Nerve v0.3.0 setup
+# Nerve development setup (v0.3.2.dev0)
 
 ## Install
 
