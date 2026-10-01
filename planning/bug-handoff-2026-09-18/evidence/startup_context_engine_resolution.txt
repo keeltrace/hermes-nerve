@@ -3,10 +3,10 @@
    207	10:25:10 - hermes_cli.plugins - DEBUG - Plugin mnemosyne registered tool: mnemosyne_persona_reinforce
    208	10:25:10 - agent.memory_manager - INFO - Memory provider 'mnemosyne' registered (40 tools)
    209	10:25:11 - _hermes_user_memory.mnemosyne__source_7311bc489ade246c - INFO - Mnemosyne registered Hermes auxiliary LLM backend for memory operations
-   210	10:25:11 - _hermes_user_memory.mnemosyne__source_7311bc489ade246c - INFO - Mnemosyne initialized: session=hermes_20260918_102503_61509b, db=/home/j/.hermes/profiles/muna/mnemosyne/data/mnemosyne.db
-   211	10:25:11 - _hermes_user_memory.mnemosyne__source_7311bc489ade246c - DEBUG - Audit log initialized: /home/j/.hermes/profiles/muna/mnemosyne/data/mnemosyne.db
+   210	10:25:11 - _hermes_user_memory.mnemosyne__source_7311bc489ade246c - INFO - Mnemosyne initialized: session=hermes_20260918_102503_61509b, db=~/.hermes/profiles/<profile>/mnemosyne/data/mnemosyne.db
+   211	10:25:11 - _hermes_user_memory.mnemosyne__source_7311bc489ade246c - DEBUG - Audit log initialized: ~/.hermes/profiles/<profile>/mnemosyne/data/mnemosyne.db
    212	10:25:11 - run_agent - INFO - Memory provider 'mnemosyne' activated
-   213	10:25:11 - plugins.context_engine - DEBUG - Context engine 'jev' not found in /home/j/.hermes/hermes-agent/plugins/context_engine
+   213	10:25:11 - plugins.context_engine - DEBUG - Context engine 'jev' not found in ~/.hermes/hermes-agent/plugins/context_engine
    214	10:25:11 - run_agent - INFO - Using context engine: jev
    215	📊 Context limit: 96,000 tokens (compress at 72% = 69,120)
    216	

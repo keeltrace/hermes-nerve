@@ -4,9 +4,9 @@
 
 Highest value. Read:
 
-- `/home/j/.hermes/profiles/muna/jev/nervous-events.jsonl`
-- `/home/j/.hermes/profiles/muna/jev/decision-outcomes.jsonl`
-- `/home/j/.hermes/profiles/muna/jev/receipts.jsonl`
+- `~/.hermes/profiles/<profile>/jev/nervous-events.jsonl`
+- `~/.hermes/profiles/<profile>/jev/decision-outcomes.jsonl`
+- `~/.hermes/profiles/<profile>/jev/receipts.jsonl`
 
 Build a timestamp/event-ID timeline:
 
