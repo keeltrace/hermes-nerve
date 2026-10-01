@@ -1,6 +1,6 @@
 # Nerve
 
-Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.0` is the profile-aware modular release: it adds Nerve setup personalities, hard-OFF module semantics, Assistant Accountability, optional Shared Context integration, profile/runtime truthfulness, stronger persistence and path trust boundaries, and release/package hardening while preserving v0.2.3-compatible Legacy behavior when no profile is selected. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
+Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.1` is the final maintenance release for the profile-aware `0.3.0` line: it concentrates bug fixes, hardening, completion/retry integrity, configuration correctness, and setup QOL without adding the separate 0.3.2 feature tracks. Shared Context remains supported but is opt-in until HermesContextBus has a public install source. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
 
 
 ## Dev17 — open backend release matrix
