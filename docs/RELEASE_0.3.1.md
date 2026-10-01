@@ -1,6 +1,6 @@
-# Nerve v0.3.1 — final maintenance release
+# Nerve v0.3.1rc2 — final qualification candidate
 
-Nerve 0.3.1 is the final stable maintenance, hardening, and quality-of-life release for the 0.3.0 profile-aware line. It also includes one deliberately approved, opt-in additive safety feature: @jcrabapple's ask-only Action Gate mode from #41, with the #44 maintainer hardening.
+Nerve 0.3.1rc2 is the final qualification candidate for the stable 0.3.1 maintenance, hardening, and quality-of-life release for the 0.3.0 profile-aware line. It also includes one deliberately approved, opt-in additive safety feature: @jcrabapple's ask-only Action Gate mode from #41, with the #44 maintainer hardening.
 
 It promotes the validated `v0.3.1rc1` maintenance baseline and adds the final public-facing setup correction for Shared Context. It deliberately does **not** pull 0.3.2 feature work into the maintenance release.
 
