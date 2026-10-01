@@ -34,13 +34,13 @@ execution.version: 0.2.1
 ## Earlier ungrounded Jev-attribution result
 
 ```text
-Path: /home/j/old-ssd-migration-20260908.log
+Path: /home/<user>/old-ssd-migration-20260908.log
 Jev decision: PASS
 Jev confidence: 1.0
 Jev verification result: PASS
 Jev request ID: N/A
 
-Path: /home/j/.claude-server-commander/claude_tool_call.log
+Path: /home/<user>/.claude-server-commander/claude_tool_call.log
 Jev decision: PASS
 Jev confidence: 1.0
 Jev verification result: PASS
