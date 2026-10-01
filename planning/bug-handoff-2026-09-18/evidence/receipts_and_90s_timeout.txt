@@ -9,7 +9,7 @@
   4665	     16, "hermes/pre-tool-gate/v1": 121, "jev-busywork-regressions": 1,
   4666	     "phase4-regressions": 1}, "by_model": {"typesafe/jev-1.13-20260917": 346},
   4667	     "input_tokens": 330494, "output_tokens": 23653, "path":
-  4668	     "/home/j/.hermes/profiles/muna/jev/receipts.jsonl", "provider_calls": 336,
+  4668	     "~/.hermes/profiles/<profile>/jev/receipts.jsonl", "provider_calls": 336,
   4669	     "receipt_count": 346, "recent": [{"contract":
   4670	     "hermes/jev-nervous-control/v1", "cost": 4.305e-05, "input_tokens": 1025,
   4671	     "latency_ms": 190.928, "model": "typesafe/jev-1.13-20260917",
