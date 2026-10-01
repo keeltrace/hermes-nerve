@@ -1,4 +1,4 @@
-# Nerve v0.3.1rc2 setup
+# Nerve v0.3.1 setup
 
 ## Install
 

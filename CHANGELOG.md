@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.3.1rc2 — final qualification candidate
+## 0.3.1 — stable maintenance, hardening, and QOL
 
-Final qualification candidate for the stable 0.3.1 maintenance line, superseding `v0.3.1rc1`.
+Stable promotion of the qualified `v0.3.1rc2` tree.
 
 - Fix Nerve settings namespace handling so configuration is read from `plugins.entries.nerve.settings`; warn on the legacy ignored `hermes-nerve` block and preserve omitted profile-script settings instead of overwriting effective values.
 - Harden context-engine registration/loading, unknown-mode fallback, stats truthfulness, ledger session attribution, and worker profile secret-scope propagation.

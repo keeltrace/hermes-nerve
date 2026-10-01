@@ -1,5 +1,5 @@
 name: nerve
-version: "0.3.1rc2"
+version: "0.3.1"
 description: "Nerve supervisory nervous system for Hermes Agent with Jev, Laya, and OpenJev Reflex backends, evidence-backed Kanban supervision, token-budget trajectory control, context governance, and durable SSH Hermes workers."
 author: "KeelTrace community"
 license: MIT
