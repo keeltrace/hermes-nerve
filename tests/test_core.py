@@ -1230,6 +1230,150 @@ class ContextEngineTests(unittest.TestCase):
         self.assertIsNone(e._fallback)
 
 
+    @staticmethod
+    def _goal11_recoverable_tool_history(count):
+        messages = [{"role": "user", "content": "debug long session"}]
+        for i in range(count):
+            call_id = f"c{i:03d}"
+            messages.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "terminal",
+                        "arguments": json.dumps({"command": f"git status --short item-{i:03d}"}),
+                    },
+                }],
+            })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": f"result-{i:03d}",
+            })
+        return messages
+
+    def test_goal11_bounds_47_48_49_80_and_selects_most_recent(self):
+        cap = context.MAX_ITEMS
+        self.assertEqual(cap, 48)
+        for count in (47, 48, 49, 80):
+            with self.subTest(count=count):
+                e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1)
+                e.protect_last_n = 0
+                captured = []
+                original = context.curate_context
+
+                def fake_curate(**kwargs):
+                    selected = list(kwargs["items"])
+                    captured.append(selected)
+                    return {
+                        "decisions": [{"id": item["id"], "action": "KEEP_EXACT"} for item in selected],
+                        "curated_items": [dict(item) for item in selected],
+                        "stats": {},
+                    }
+
+                context.curate_context = fake_curate
+                messages = self._goal11_recoverable_tool_history(count)
+                try:
+                    out = e.compress(messages, current_tokens=999999)
+                finally:
+                    context.curate_context = original
+
+                expected = min(count, cap)
+                self.assertEqual(len(captured), 1)
+                self.assertEqual(len(captured[0]), expected)
+                expected_start = max(0, count - cap)
+                self.assertEqual(
+                    [item["content"] for item in captured[0]],
+                    [f"result-{i:03d}" for i in range(expected_start, count)],
+                )
+                stats = e._last_plan["stats"]
+                self.assertEqual(stats["context_engine_candidates_total"], count)
+                self.assertEqual(stats["context_engine_candidates_selected"], expected)
+                self.assertEqual(stats["context_engine_candidates_skipped"], count - expected)
+                self.assertEqual(out, messages)
+
+    def test_goal11_selection_is_deterministic_and_defers_older_evidence(self):
+        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1)
+        e.protect_last_n = 0
+        messages = self._goal11_recoverable_tool_history(80)
+        items, _ = e._items(messages)
+        first, first_stats = e._select_candidates(items)
+        second, second_stats = e._select_candidates(items)
+        self.assertEqual([item["id"] for item in first], [item["id"] for item in second])
+        self.assertEqual(first_stats, second_stats)
+        self.assertEqual(first[0]["content"], "result-032")
+        self.assertEqual(first[-1]["content"], "result-079")
+        self.assertEqual(first_stats["deferred_items"], 32)
+        self.assertEqual(messages[2]["content"], "result-000")
+
+    def test_goal11_anchor_and_unrecoverable_candidates_remain_excluded(self):
+        e = NerveContextEngine(mode="apply")
+        items = [
+            {"id": "anchor", "content": "[NERVE_CONTEXT_ANCHOR abc]", "recoverable": True},
+            {"id": "unsafe", "content": "write result", "recoverable": False},
+            {"id": "safe", "content": "git status result", "recoverable": True},
+        ]
+        selected, stats = e._select_candidates(items)
+        self.assertEqual([item["id"] for item in selected], ["safe"])
+        self.assertEqual(stats["input_items"], 3)
+        self.assertEqual(stats["eligible_items"], 1)
+        self.assertEqual(stats["skipped_anchor_items"], 1)
+        self.assertEqual(stats["skipped_unrecoverable_items"], 1)
+
+    def test_goal11_curation_exception_fails_open_without_error_text(self):
+        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1, fallback_builtin=False)
+        e.protect_last_n = 0
+        e._fallback = None
+        messages = self._goal11_recoverable_tool_history(49)
+        original = context.curate_context
+
+        def fail_curate(**kwargs):
+            raise RuntimeError("provider detail that must not enter telemetry")
+
+        context.curate_context = fail_curate
+        try:
+            out = e.compress(messages, current_tokens=999999)
+        finally:
+            context.curate_context = original
+
+        self.assertEqual(out, messages)
+        self.assertEqual(e._last_plan["contract"], "context-engine/fail-open/v1")
+        stats = e._last_plan["stats"]
+        self.assertEqual(stats["curation_error_type"], "RuntimeError")
+        self.assertEqual(stats["context_engine_candidates_total"], 49)
+        self.assertEqual(stats["context_engine_candidates_selected"], 48)
+        self.assertEqual(stats["context_engine_candidates_skipped"], 1)
+        self.assertNotIn("provider detail", json.dumps(e._last_plan))
+
+    def test_goal11_repeated_compression_stays_bounded(self):
+        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1)
+        e.protect_last_n = 0
+        messages = self._goal11_recoverable_tool_history(80)
+        observed = []
+        original = context.curate_context
+
+        def fake_curate(**kwargs):
+            selected = list(kwargs["items"])
+            observed.append(len(selected))
+            return {
+                "decisions": [{"id": item["id"], "action": "KEEP_EXACT"} for item in selected],
+                "curated_items": [dict(item) for item in selected],
+                "stats": {},
+            }
+
+        context.curate_context = fake_curate
+        try:
+            first = e.compress(messages, current_tokens=999999)
+            second = e.compress(first, current_tokens=999999)
+        finally:
+            context.curate_context = original
+
+        self.assertEqual(observed, [context.MAX_ITEMS, context.MAX_ITEMS])
+        self.assertEqual(second, messages)
+
+
 class LiveSmokeTests(unittest.TestCase):
     def test_live_smoke_requires_explicit_api_key(self):
         root = Path(__file__).resolve().parents[1]
