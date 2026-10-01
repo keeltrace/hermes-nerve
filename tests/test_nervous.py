@@ -209,6 +209,79 @@ class NervousSystemTests(unittest.TestCase):
             self.assertGreaterEqual(q["repeated_failure_provider_calls_avoided"], 2)
             self.assertGreaterEqual(q["control_override_attempts"], 1)
 
+    def test_deterministic_policy_failure_replans_after_first_block_without_provider(self):
+        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
+            "HERMES_NERVE_NERVOUS_EVENTS": str(Path(td) / "nervous.jsonl"),
+            "HERMES_NERVE_OUTCOMES": str(Path(td) / "outcomes.jsonl"),
+        }, clear=False):
+            ScriptedEngine.reset()
+            system = nervous.NervousSystem(engine_factory=ScriptedEngine)
+            system.configure(enabled=True, admission_enabled=False, mode="correct_next")
+            system.start_turn(user_message="recover from policy block", session_id="s1", turn_id="t1")
+            out = system.observe_tool_call(
+                tool_name="execute_code", args={"code": "print('x')"}, status="error",
+                result="BLOCKED: execute_code is not allowed in an unattended session; single-query mode requires approval",
+                error_message="", tool_call_id="c1", session_id="s1", turn_id="t1",
+            )
+            self.assertFalse(out["forwarded"])
+            self.assertIn("deterministic-failure-local-replan", out["router"]["reasons"])
+            state = system.status(turn_id="t1")
+            self.assertEqual(state["active_control"]["control"], "REPLAN")
+            self.assertEqual(state["active_control"]["source"], "local-deterministic-failure")
+            self.assertEqual(ScriptedEngine.calls, [])
+            transformed = system.inject_challenge("blocked", turn_id="t1")
+            self.assertIn("Do not repeat the same tool with the same arguments", transformed)
+            blocked = system.before_tool_call(
+                tool_name="execute_code", args={"code": "print('x')"},
+                session_id="s1", turn_id="t1", tool_call_id="c2",
+            )
+            self.assertEqual(blocked["action"], "block")
+            allowed = system.before_tool_call(
+                tool_name="read_file", args={"path": "README.md"},
+                session_id="s1", turn_id="t1", tool_call_id="c3",
+            )
+            self.assertIsNone(allowed)
+            self.assertIsNone(system.status(turn_id="t1")["active_control"])
+            self.assertEqual(system.quality_metrics()["deterministic_failure_replans"], 1)
+
+    def test_deterministic_failure_classifier_boundary_matrix(self):
+        deterministic = {
+            "policy block": ("error", "BLOCKED: execute_code is not allowed", "", "blocked:"),
+            "permission": ("error", "permission denied; try again with elevated privileges", "", "permission denied"),
+            "approval": ("error", "approval required before this action", "", "approval required"),
+            "invalid arg": ("error", "invalid argument: --mdoe", "", "invalid argument"),
+            "unknown option": ("error", "unknown option --mdoe", "", "unknown option"),
+            "schema": ("error", "schema validation failed for field x", "", "schema validation"),
+            "missing file": ("error", '{"error":"File not found: missing.txt"}', "", "file not found"),
+            "missing path": ("error", "no such file or directory: /tmp/missing", "", "no such file or directory"),
+            "read only": ("error", "read-only file system", "", "read-only file system"),
+        }
+        for label, (status, result, error, expected) in deterministic.items():
+            with self.subTest(label=label):
+                self.assertEqual(nervous._deterministic_failure_reason(status, result, error), expected)
+
+        transient = {
+            "timeout": ("error", "request timed out after 5s", ""),
+            "connection reset": ("error", "connection reset by peer", ""),
+            "connection refused": ("error", "connection refused", ""),
+            "connection failed": ("error", "connection failed after 501 ms", "connection failed"),
+            "temporary unavailable": ("error", "temporarily unavailable", ""),
+            "temporary failure": ("error", "temporary failure in name resolution", ""),
+            "rate limit": ("error", "rate limit exceeded", ""),
+            "429": ("error", "too many requests", ""),
+            "503": ("error", "service unavailable", ""),
+            "resource busy": ("error", "resource busy", ""),
+            "database lock": ("error", "database is locked", ""),
+        }
+        for label, (status, result, error) in transient.items():
+            with self.subTest(label=label):
+                self.assertEqual(nervous._deterministic_failure_reason(status, result, error), "")
+
+        self.assertEqual(
+            nervous._deterministic_failure_reason("blocked", "temporary-looking text", ""),
+            "blocked-status",
+        )
+
     def test_remote_replan_enforces_next_action_and_attributes_followup(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
             "HERMES_NERVE_NERVOUS_EVENTS": str(Path(td) / "nervous.jsonl"),
