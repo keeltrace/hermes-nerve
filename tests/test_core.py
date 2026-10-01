@@ -1229,6 +1229,251 @@ class ContextEngineTests(unittest.TestCase):
         e._build_fallback()
         self.assertIsNone(e._fallback)
 
+    # ------------------------------------------------------------------
+    # Goal-11: long-session context cap tests
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _recoverable_tool_history(count, protect_last_n=0):
+        """Build a synthetic tool-result message list with ``count`` recoverable pairs.
+
+        Uses ``git status`` as the command so every result is classified as
+        recoverable by the ledger's conservative classifier.  ``protect_last_n``
+        is accepted for API compatibility but the caller sets it on the engine;
+        it is not applied here.
+        """
+        messages = [{"role": "user", "content": "debug long session"}]
+        for i in range(count):
+            call_id = f"c{i:03d}"
+            messages.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "terminal", "arguments": json.dumps({"command": f"git status --short {i}"})},
+                }],
+            })
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": f"result-{i:03d}"})
+        return messages
+
+    def test_goal11_select_candidates_picks_most_recent_eligible_when_over_cap(self):
+        """_select_candidates must return the most-recent MAX_ITEMS items, not oldest."""
+        from hermes_nerve import context as ctx_mod
+        cap = ctx_mod.MAX_ITEMS
+        # Use counts large enough that after the protect_last_n=1 floor the eligible
+        # pool still exercises the cap boundary.  With protect_last_n clamped to 1,
+        # _items() returns (count - 1) items, so cap+2 → cap+1 eligible (cap hit),
+        # cap+1 → cap eligible (exactly at cap), 80 → 79 eligible (cap hit).
+        for count in (cap + 1, cap + 2, 80):
+            with self.subTest(count=count):
+                e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=0)
+                items, _ = e._items(self._recoverable_tool_history(count))
+                selected, stats = e._select_candidates(items)
+                n_items = len(items)
+                expected_n = min(n_items, cap)
+                self.assertEqual(len(selected), expected_n, f"count={count}")
+                # Most-recent eligible items: the last ``expected_n`` entries.
+                expected_start = max(0, n_items - cap)
+                self.assertEqual(
+                    [item["content"] for item in selected],
+                    [f"result-{i:03d}" for i in range(expected_start, n_items)],
+                    f"count={count}: wrong ordering — should be most-recent",
+                )
+
+    def test_goal11_stats_fields_in_last_plan(self):
+        """compress() must record candidates_total/selected/skipped in _last_plan stats."""
+        from hermes_nerve import context as ctx_mod
+        cap = ctx_mod.MAX_ITEMS
+        # With protect_last_n clamped to 1, _items returns (count - 1) items.
+        # Use cap+32+1 so the eligible pool is exactly cap+32 = 80, hitting the cap.
+        count = cap + 32 + 1  # 81 total messages → 80 eligible items
+        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=0)
+        captured = []
+        original = ctx_mod.curate_context
+
+        def fake_curate(**kwargs):
+            selected = list(kwargs["items"])
+            captured.append(selected)
+            return {
+                "decisions": [{"id": item["id"], "action": "KEEP_EXACT"} for item in selected],
+                "curated_items": [dict(item) for item in selected],
+                "stats": {},
+            }
+
+        ctx_mod.curate_context = fake_curate
+        messages = self._recoverable_tool_history(count)
+        try:
+            out = e.compress(messages, current_tokens=999999)
+        finally:
+            ctx_mod.curate_context = original
+
+        self.assertEqual(len(captured), 1)
+        stats = e._last_plan.get("stats", {})
+        # _items returns count-1 = cap+32 = 80 eligible items (one is protect_last_n).
+        expected_total = count - 1
+        self.assertEqual(stats["context_engine_candidates_total"], expected_total)
+        self.assertEqual(stats["context_engine_candidates_selected"], cap)
+        self.assertEqual(stats["context_engine_candidates_skipped"], expected_total - cap)
+        # Unselected older messages are untouched.
+        self.assertEqual(out, messages)
+
+    def test_goal11_bounded_47_48_49_80_subtest(self):
+        """Boundary regressions: 47/48/49/80 eligible items all handled correctly."""
+        from hermes_nerve import context as ctx_mod
+        cap = ctx_mod.MAX_ITEMS
+        for count in (cap - 1, cap, cap + 1, 80):
+            with self.subTest(count=count):
+                e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1)
+                # Bypass the min-1 floor so all tool results are eligible candidates.
+                e.protect_last_n = 0
+                captured = []
+                original = ctx_mod.curate_context
+
+                def fake_curate(**kwargs):
+                    captured.append(list(kwargs["items"]))
+                    sel = list(kwargs["items"])
+                    return {
+                        "decisions": [{"id": it["id"], "action": "KEEP_EXACT"} for it in sel],
+                        "curated_items": [dict(it) for it in sel],
+                        "stats": {},
+                    }
+
+                ctx_mod.curate_context = fake_curate
+                messages = self._recoverable_tool_history(count)
+                try:
+                    out = e.compress(messages, current_tokens=999999)
+                finally:
+                    ctx_mod.curate_context = original
+
+                expected_n = min(count, cap)
+                self.assertEqual(len(captured), 1)
+                self.assertEqual(len(captured[0]), expected_n)
+                # Most-recent selection.
+                expected_start = max(0, count - cap)
+                self.assertEqual(
+                    [it["content"] for it in captured[0]],
+                    [f"result-{i:03d}" for i in range(expected_start, count)],
+                )
+                # Messages are returned intact (all KEEP_EXACT).
+                self.assertEqual(out, messages)
+                stats = e._last_plan.get("stats", {})
+                self.assertEqual(stats["context_engine_candidates_total"], count)
+                self.assertEqual(stats["context_engine_candidates_selected"], expected_n)
+                self.assertEqual(stats["context_engine_candidates_skipped"], count - expected_n)
+
+    def test_goal11_unselected_older_evidence_preserved_exact(self):
+        """Older evidence beyond the cap must survive untouched in the output."""
+        from hermes_nerve import context as ctx_mod
+        cap = ctx_mod.MAX_ITEMS
+        count = 80
+        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=0)
+        original = ctx_mod.curate_context
+
+        def fake_curate(**kwargs):
+            sel = list(kwargs["items"])
+            # Drop the first selected item so we can check anchoring logic.
+            first = sel[0]
+            return {
+                "decisions": [{"id": first["id"], "action": "DROP"}],
+                "curated_items": [],
+                "stats": {},
+            }
+
+        ctx_mod.curate_context = fake_curate
+        messages = self._recoverable_tool_history(count)
+        # content of the very first tool result (index 2) must survive.
+        unselected_content = messages[2]["content"]
+        self.assertEqual(unselected_content, "result-000")
+        # With protect_last_n clamped to 1, _items returns (count - 1) = 79 eligible items.
+        # The cap window starts at eligible item (79 - 48) = 31, i.e. result-031.
+        # Message layout: 1 user msg + pairs of (assistant, tool); result-031 is at
+        # message index 1 + 31*2 + 1 = 64.
+        e_items, _ = e._items(messages)
+        n_items = len(e_items)  # 79
+        window_start_item = n_items - cap  # 31
+        first_selected_tool_idx = 1 + window_start_item * 2 + 1  # 64
+        try:
+            out = e.compress(messages, current_tokens=999999)
+        finally:
+            ctx_mod.curate_context = original
+
+        # The first tool result was NOT in the selected window — must be untouched.
+        self.assertEqual(out[2]["content"], unselected_content)
+        # The first selected item (oldest inside the cap window) was DROPped → anchored.
+        self.assertIn("NERVE_CONTEXT_ANCHOR", out[first_selected_tool_idx]["content"])
+
+    def test_goal11_fails_open_to_builtin_on_curation_exception(self):
+        """curation_error_type must appear in _last_plan; error text must not leak."""
+        class Fallback:
+            def compress(self, messages, **kwargs):
+                return [messages[0], {"role": "assistant", "content": "fallback summary"}]
+
+        from hermes_nerve import context as ctx_mod
+        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=0, fallback_builtin=True)
+        e._fallback = Fallback()
+        original = ctx_mod.curate_context
+        ctx_mod.curate_context = lambda **kwargs: (_ for _ in ()).throw(ValueError("provider detail must not leak"))
+        # Need >=2 pairs so that after protect_last_n=1 clamping _items returns >=1 item
+        # and curate_context is actually called (triggering the exception path under test).
+        try:
+            out = e.compress(self._recoverable_tool_history(2), current_tokens=999999)
+        finally:
+            ctx_mod.curate_context = original
+
+        self.assertEqual(out[-1]["content"], "fallback summary")
+        plan = e._last_plan
+        self.assertIn("curation_error_type", plan.get("stats", {}))
+        self.assertEqual(plan["stats"]["curation_error_type"], "ValueError")
+        self.assertNotIn("provider detail must not leak", str(plan))
+
+    def test_goal11_repeated_compression_stays_bounded(self):
+        """Repeated compress() calls on a growing history never send >MAX_ITEMS to curation."""
+        from hermes_nerve import context as ctx_mod
+        cap = ctx_mod.MAX_ITEMS
+        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=0)
+        all_captured = []
+        original = ctx_mod.curate_context
+
+        def fake_curate(**kwargs):
+            sel = list(kwargs["items"])
+            all_captured.append(len(sel))
+            return {
+                "decisions": [{"id": it["id"], "action": "KEEP_EXACT"} for it in sel],
+                "curated_items": [dict(it) for it in sel],
+                "stats": {},
+            }
+
+        ctx_mod.curate_context = fake_curate
+        try:
+            for count in (cap - 1, cap, cap + 1, 80):
+                messages = self._recoverable_tool_history(count)
+                e.compress(messages, current_tokens=999999)
+        finally:
+            ctx_mod.curate_context = original
+
+        for call_idx, sent_count in enumerate(all_captured):
+            self.assertLessEqual(sent_count, cap, f"call {call_idx}: sent {sent_count} > cap {cap}")
+
+    def test_goal11_deterministic_ordering_most_recent_eligible(self):
+        """Selected items must be ordered oldest-first within the cap window (deterministic)."""
+        from hermes_nerve import context as ctx_mod
+        cap = ctx_mod.MAX_ITEMS
+        count = 60
+        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=0)
+        items, _ = e._items(self._recoverable_tool_history(count))
+        selected, _ = e._select_candidates(items)
+        # With protect_last_n clamped to 1, _items returns (count - 1) items.
+        n_items = len(items)
+        # And it is the tail window, not the head.
+        self.assertEqual(len(selected), cap)
+        self.assertEqual(selected[0]["content"], f"result-{n_items - cap:03d}")
+        self.assertEqual(selected[-1]["content"], f"result-{n_items - 1:03d}")
+        # Deterministic: numerically ascending message-index order (preserve original sequence).
+        # IDs have the form msg-{idx}-{call_id}; extract the numeric index for comparison.
+        msg_indices = [int(it["id"].split("-")[1]) for it in selected]
+        self.assertEqual(msg_indices, sorted(msg_indices))
+
 
 class LiveSmokeTests(unittest.TestCase):
     def test_live_smoke_requires_explicit_api_key(self):

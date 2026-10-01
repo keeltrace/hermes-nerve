@@ -249,9 +249,15 @@ class NerveContextEngine(ContextEngine):
         if isinstance(out, list) and out is not messages and out != messages:
             self.compression_count += 1
             self.last_prompt_tokens = -1
+            fallback_stats: dict[str, Any] = {"fallback_used": True, "nerve_candidates": int(nerve_candidates)}
+            # Goal-11: preserve curation_error_type recorded before fallback so it
+            # is not silently overwritten when the built-in compressor succeeds.
+            prior_error_type = (self._last_plan or {}).get("stats", {}).get("curation_error_type")
+            if prior_error_type:
+                fallback_stats["curation_error_type"] = prior_error_type
             self._last_plan = {
                 "contract": "context-engine/fallback-built-in/v1",
-                "stats": {"fallback_used": True, "nerve_candidates": int(nerve_candidates)},
+                "stats": fallback_stats,
             }
             return out
         return messages
@@ -330,7 +336,13 @@ class NerveContextEngine(ContextEngine):
         return items, index_by_id
 
     def _select_candidates(self, items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
-        """Select one bounded, progressive batch for automatic semantic curation."""
+        """Select one bounded, progressive batch for automatic semantic curation.
+
+        When eligible evidence exceeds MAX_ITEMS the *most-recent* items are
+        selected so that the freshest context is always semantically curated.
+        Older, unselected evidence remains byte-for-byte exact in ``messages``;
+        it is deferred, not destroyed.
+        """
         eligible: list[dict[str, Any]] = []
         skipped_anchors = 0
         skipped_unrecoverable = 0
@@ -342,7 +354,9 @@ class NerveContextEngine(ContextEngine):
                 skipped_unrecoverable += 1
                 continue
             eligible.append(item)
-        selected = eligible[: context.MAX_ITEMS]
+        # Goal-11: select the most-recent eligible items so long sessions always
+        # present the freshest evidence to the curation contract.
+        selected = eligible[-context.MAX_ITEMS:] if len(eligible) > context.MAX_ITEMS else eligible
         stats = {
             "input_items": len(items),
             "eligible_items": len(eligible),
@@ -399,6 +413,11 @@ class NerveContextEngine(ContextEngine):
             plan = dict(plan)
             plan_stats = dict(plan.get("stats") or {}) if isinstance(plan.get("stats"), dict) else {}
             plan_stats["engine_selection"] = dict(selection)
+            # Goal-11: expose the candidate cap counters so callers can see how many
+            # items were bounded by the long-session working-set limit.
+            plan_stats["context_engine_candidates_total"] = selection.get("input_items", len(items))
+            plan_stats["context_engine_candidates_selected"] = selection.get("selected_items", len(selected))
+            plan_stats["context_engine_candidates_skipped"] = selection.get("deferred_items", 0)
             plan["stats"] = plan_stats
             self._last_plan = plan
 
@@ -452,6 +471,9 @@ class NerveContextEngine(ContextEngine):
                 "stats": {
                     "nerve_curation_failed": True,
                     "failure_type": self._last_failure_type,
+                    # Goal-11: record only the exception type; provider/error text must
+                    # not leak into telemetry.
+                    "curation_error_type": type(exc).__name__,
                     "engine_selection": dict(selection),
                 },
             }
