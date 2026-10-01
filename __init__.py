@@ -93,7 +93,7 @@ def _register_legacy(ctx):
         shadow_log=ctx.get_config("reflex_shadow_log", ""),
     )
     gate.configure(
-        mode=ctx.get_config("gate_mode", "off"),
+        mode=ctx.get_config("gate_mode", os.getenv("HERMES_NERVE_GATE_MODE", "off")),
         min_confidence=ctx.get_config("min_confidence", 0.80),
         min_allow_probability=ctx.get_config("min_allow_probability", os.getenv("HERMES_NERVE_MIN_ALLOW_PROBABILITY", 0.90)),
         scope=ctx.get_config("gate_scope", "selective"),
@@ -345,7 +345,7 @@ def _register_profile(ctx):
         )
 
     gate.configure(
-        mode=profile_default("gate_mode","advisory") if policy.enabled("action_gate") and not headless_worker else "off",
+        mode=profile_default("gate_mode",os.getenv("HERMES_NERVE_GATE_MODE","advisory")) if policy.enabled("action_gate") and not headless_worker else "off",
         min_confidence=get("min_confidence",0.80),
         min_allow_probability=get("min_allow_probability",os.getenv("HERMES_NERVE_MIN_ALLOW_PROBABILITY",0.90)),
         scope=get("gate_scope","selective"),
