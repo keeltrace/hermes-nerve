@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — 0.3.2.dev0
+
+- Mark current `main` as the post-release development line instead of reporting itself as `0.3.0` or as the separate `v0.3.1rc1` maintenance snapshot.
+- Carry the ask-only Action Gate mode and its action-specific approval/environment-fallback hardening from #41/#44.
+- Bound long-session context curation to the most-recent 48 eligible evidence items, with deterministic deferral and fail-open telemetry (#48).
+- Re-evaluate machine-checkable Definition-of-Done criteria against current workspace state on every completion attempt so stale PASS verdicts cannot survive later regressions (#49).
+- Reconcile deterministic retry-loop suppression and task-relative progress/environment-thrash hardening onto clean `main` ancestry (#50).
+- Keep `v0.3.1rc1` immutable as a maintenance-only release candidate that intentionally excludes ask-only. Feature tracks #37, #38, and #40 remain separate from this development baseline.
+
 ## 0.3.0 — profiles, modular runtime, and release hardening
 
 - Add `nerve setup` with Full Configuration, Fat Cat, Operator, Lean, Marie Kondo, Custom, and explicit Legacy behavior.
