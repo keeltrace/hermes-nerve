@@ -330,7 +330,7 @@ class NerveContextEngine(ContextEngine):
         return items, index_by_id
 
     def _select_candidates(self, items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
-        """Select one bounded, progressive batch for automatic semantic curation."""
+        """Select one bounded, progressive batch for automatic semantic curation.\n\n        When eligible evidence exceeds MAX_ITEMS, select the most-recent\n        eligible items. Older eligible evidence is deferred and remains exact in\n        the original message list until a later curation pass.\n        """
         eligible: list[dict[str, Any]] = []
         skipped_anchors = 0
         skipped_unrecoverable = 0
@@ -342,7 +342,7 @@ class NerveContextEngine(ContextEngine):
                 skipped_unrecoverable += 1
                 continue
             eligible.append(item)
-        selected = eligible[: context.MAX_ITEMS]
+        selected = eligible[-context.MAX_ITEMS:] if len(eligible) > context.MAX_ITEMS else eligible
         stats = {
             "input_items": len(items),
             "eligible_items": len(eligible),
@@ -399,6 +399,9 @@ class NerveContextEngine(ContextEngine):
             plan = dict(plan)
             plan_stats = dict(plan.get("stats") or {}) if isinstance(plan.get("stats"), dict) else {}
             plan_stats["engine_selection"] = dict(selection)
+            plan_stats["context_engine_candidates_total"] = selection.get("eligible_items", len(selected))
+            plan_stats["context_engine_candidates_selected"] = selection.get("selected_items", len(selected))
+            plan_stats["context_engine_candidates_skipped"] = selection.get("deferred_items", 0)
             plan["stats"] = plan_stats
             self._last_plan = plan
 
@@ -452,6 +455,10 @@ class NerveContextEngine(ContextEngine):
                 "stats": {
                     "nerve_curation_failed": True,
                     "failure_type": self._last_failure_type,
+                    "curation_error_type": type(exc).__name__,
+                    "context_engine_candidates_total": selection.get("eligible_items", len(selected)),
+                    "context_engine_candidates_selected": selection.get("selected_items", len(selected)),
+                    "context_engine_candidates_skipped": selection.get("deferred_items", 0),
                     "engine_selection": dict(selection),
                 },
             }
