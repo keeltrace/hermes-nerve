@@ -330,10 +330,8 @@ Do not rebuild.
 Current implementation:
 
 ```text
-/home/j/Documents/LargeProjects/mega-mcp/worktrees/HermesContextBus
+<HermesContextBus worktree path>
 ```
-
-Implemented today:
 
 - pre-LLM bounded context injection;
 - post-LLM bounded durable handoff;
@@ -627,7 +625,7 @@ planning/nerve-setup-profiles-factory-audit/PROFILE_EVIDENCE.md
 HermesContextBus remains separate at:
 
 ```text
-/home/j/Documents/LargeProjects/mega-mcp/worktrees/HermesContextBus
+<HermesContextBus worktree path>
 ```
 
 ## 16. Dependency graph
