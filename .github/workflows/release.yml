@@ -40,23 +40,32 @@ jobs:
       - name: Resolve and verify release version
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           python - <<'PY'
           import os, tomllib
           from pathlib import Path
           requested = os.environ.get("REQUESTED_VERSION", "").strip()
+          event_name = os.environ.get("EVENT_NAME", "").strip()
           pyproject = tomllib.loads(Path("pyproject.toml").read_text())
           actual = pyproject["project"]["version"]
           if requested and actual != requested:
               raise SystemExit(f"requested version {requested!r} does not match pyproject version {actual!r}")
           version = requested or actual
-          if ".dev" in version:
+          skip_release = ".dev" in version and event_name == "push"
+          if ".dev" in version and not skip_release:
               raise SystemExit("development versions cannot be published by the stable release workflow")
           with open(os.environ["GITHUB_ENV"], "a") as fh:
               fh.write(f"VERSION={version}\n")
+              fh.write(f"SKIP_RELEASE={'1' if skip_release else '0'}\n")
           PY
 
+      - name: Development version — stable release skipped
+        if: env.SKIP_RELEASE == '1'
+        run: echo "Current main is a development version; stable publication is intentionally skipped."
+
       - name: Verify default branch
+        if: env.SKIP_RELEASE != '1'
         env:
           REF_NAME: ${{ github.ref_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -70,9 +79,11 @@ jobs:
           PY
 
       - name: Verify candidate
+        if: env.SKIP_RELEASE != '1'
         run: bash scripts/verify_dev17.sh
 
       - name: Check existing release
+        if: env.SKIP_RELEASE != '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -136,7 +147,7 @@ jobs:
           fi
 
       - name: Build source archives
-        if: env.RELEASE_EXISTS != '1'
+        if: env.SKIP_RELEASE != '1' && env.RELEASE_EXISTS != '1'
         run: |
           mkdir -p dist
           git archive --format=zip --prefix="nerve-v${VERSION}/" -o "dist/nerve-v${VERSION}.zip" HEAD
@@ -158,7 +169,7 @@ jobs:
           PYREL
 
       - name: Create GitHub release
-        if: env.RELEASE_EXISTS != '1'
+        if: env.SKIP_RELEASE != '1' && env.RELEASE_EXISTS != '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
