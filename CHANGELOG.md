@@ -3,6 +3,7 @@
 ## Unreleased — 0.3.2.dev0
 
 - Mark current `main` as the post-release development line instead of reporting itself as `0.3.0` or as the separate `v0.3.1rc1` maintenance snapshot.
+- Keep `packaging/hermes-catalog/nerve.yaml` pinned to the latest stable `0.3.0` while `main` carries a `.dev` runtime/package version, matching the repository's CI-enforced development-catalog boundary.
 - Carry the ask-only Action Gate mode and its action-specific approval/environment-fallback hardening from #41/#44.
 - Bound long-session context curation to the most-recent 48 eligible evidence items, with deterministic deferral and fail-open telemetry (#48).
 - Re-evaluate machine-checkable Definition-of-Done criteria against current workspace state on every completion attempt so stale PASS verdicts cannot survive later regressions (#49).
