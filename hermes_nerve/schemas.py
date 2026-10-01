@@ -1,4 +1,4 @@
-"""Hermes tool schemas for Nerve v0.3.1."""
+"""Hermes tool schemas for Nerve v0.3.1rc2."""
 
 NERVE_DECIDE={"name":"nerve_decide","description":"Make one bounded typed decision through the configured Reflex backend.","parameters":{"type":"object","properties":{"state":{},"instructions":{"type":"string"},"choices":{"type":"array","items":{"type":"string"},"minItems":2},"criteria":{"type":"object","additionalProperties":{}},"contract":{"type":"string"}},"required":["state","instructions","choices"]}}
 NERVE_RANK={"name":"nerve_rank","description":"Rank a bounded candidate set using configured Reflex-backend probabilities.","parameters":{"type":"object","properties":{"state":{},"instructions":{"type":"string"},"items":{"type":"object","minProperties":2,"additionalProperties":{}},"contract":{"type":"string"}},"required":["state","instructions","items"]}}
