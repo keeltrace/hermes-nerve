@@ -20,6 +20,38 @@ class SetupCliTests(unittest.TestCase):
         with a,b as rec,c,d,e:
             self.assertEqual(cli.main(["setup","--profile","lean"]),0); rec.assert_called_once_with(False)
 
+    def test_explain_does_not_warn_when_shared_context_is_off(self):
+        out=io.StringIO()
+        for profile in ("operator", "fat_cat"):
+            current=cli.resolve_config(profile=cli._doc(profile))
+            with patch.object(cli,"_current",return_value=current), \
+                 patch.object(cli.shared_context,"explain",return_value="HermesContextBus is not installed") as explain, \
+                 patch("sys.stdout",out):
+                self.assertEqual(cli.main(["setup","--explain"]),0)
+            explain.assert_not_called()
+        self.assertNotIn("HermesContextBus is not installed",out.getvalue())
+        self.assertIn("Shared Context: OFF",out.getvalue())
+
+    def test_explain_warns_when_shared_context_is_explicitly_enabled(self):
+        current=cli.resolve_config(profile=cli._doc("operator",{"shared_context":True}))
+        out=io.StringIO()
+        with patch.object(cli,"_current",return_value=current), \
+             patch.object(cli.shared_context,"explain",return_value="HermesContextBus is not installed") as explain, \
+             patch("sys.stdout",out):
+            self.assertEqual(cli.main(["setup","--explain"]),0)
+        explain.assert_called_once_with()
+        self.assertIn("HermesContextBus is not installed",out.getvalue())
+
+    def test_install_shared_context_cli_remains_supported(self):
+        status={"path":"/tmp/hermes-context-bus","doctor_command":"hermes plugins doctor /tmp/hermes-context-bus --ci"}
+        current=type("R",(),{"enabled":lambda self,key:False})()
+        out=io.StringIO()
+        with patch.object(cli.shared_context,"install_from_source",return_value=status) as install, \
+             patch.object(cli,"_current",return_value=current), patch("sys.stdout",out):
+            self.assertEqual(cli.main(["setup","--install-shared-context","/tmp/source"]),0)
+        install.assert_called_once_with("/tmp/source",replace=False)
+        self.assertIn("Shared Context installed",out.getvalue())
+
     def test_reconcile_failure_restores_previous_profile(self):
         import os, tempfile
         from pathlib import Path
