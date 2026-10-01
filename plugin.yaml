@@ -50,10 +50,10 @@ config_schema:
   reflex_shadow_backend: {type: str, default: "laya", description: "Open-source backend used when reflex_backend=shadow: laya or openjev."}
   reflex_shadow_async: {type: bool, default: true, description: "Run the selected open-source shadow request asynchronously so Jev latency remains authoritative."}
   reflex_shadow_log: {type: str, default: "", description: "Optional paired Jev/open-source shadow JSONL path."}
-  gate_mode: {type: str, default: "off"}
+  gate_mode: {type: str, default: "off", description: "off, advisory (log only), enforce (approve/block/approve), or ask-only (enforce without hard blocks: BLOCK verdicts escalate to human approval)."}
   gate_scope: {type: str, default: "selective"}
   min_confidence: {type: float, default: 0.80}
-  min_allow_probability: {type: float, default: 0.90, description: "Enforce mode: minimum p(ALLOW) for an ALLOW verdict to continue without a human."}
+  min_allow_probability: {type: float, default: 0.90, description: "Enforce/ask-only mode: minimum p(ALLOW) for an ALLOW verdict to continue without a human."}
   receipt_detail: {type: str, default: "hash"}
   nervous_enabled: {type: bool, default: true}
   nervous_turn_admission: {type: bool, default: true}
