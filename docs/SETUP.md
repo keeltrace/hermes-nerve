@@ -1,4 +1,4 @@
-# Nerve v0.3.1rc1 setup
+# Nerve v0.3.1rc2 setup
 
 ## Install
 
@@ -94,14 +94,14 @@ If the sidecar is absent and no `nerve_profile` plugin setting exists, Nerve pre
 
 The module layer is resolved before plugin registration. A disabled module does not register its owned Hermes tool schemas or hooks. Important initial profile choices are:
 
-- **Fat Cat:** Assistant + context/QoL features; Shared Context ON; remote workers only when hosts are configured.
-- **Operator:** direct interactive Hermes; context/action supervision ON; Kanban/Assistant/remote-worker features OFF by default; Shared Context ON.
+- **Fat Cat:** Assistant + context/QoL features; Shared Context OFF by default until HermesContextBus has a public install source; remote workers only when hosts are configured.
+- **Operator:** direct interactive Hermes; context/action supervision ON; Kanban/Assistant/remote-worker features OFF by default; Shared Context OFF by default until HermesContextBus has a public install source.
 - **Lean:** work supervision + token trajectory + nervous/reflex core; QoL/context/remote/Assistant/Shared Context OFF pending evidence. Lean also avoids provider-based turn admission by default, caps nervous provider calls at 12 per turn, uses smaller nervous event windows, and exposes only the compact `nerve_decide` manual Reflex surface; explicit advanced settings can override the runtime limits.
 - **Marie Kondo:** Reflex + evidence/DoD/work completion + minimum receipts; most other modules OFF.
 
 ### Shared Context
 
-Nerve only manages the external HermesContextBus plugin boundary.
+Nerve only manages the external HermesContextBus plugin boundary. HermesContextBus is not currently published through a public Nerve/Hermes install source, so Shared Context is opt-in for all named profiles. Explicit module overrides and local-source installation remain supported.
 
 ```bash
 nerve setup --explain

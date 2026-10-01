@@ -1,6 +1,6 @@
 [project]
 name = "hermes-nerve"
-version = "0.3.1rc1"
+version = "0.3.1rc2"
 description = "Nerve supervisory nervous system for Hermes Agent with provider-neutral Jev/Laya/OpenJev Reflex backends, evidence-backed Kanban supervision, context governance, and SSH workers"
 readme = "README.md"
 requires-python = ">=3.10"

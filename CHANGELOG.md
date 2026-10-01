@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.3.1rc1 — bug fixes, hardening, and QOL release candidate
+## 0.3.1rc2 — final qualification candidate
+
+Final qualification candidate for the stable 0.3.1 maintenance line, superseding `v0.3.1rc1`.
 
 - Fix Nerve settings namespace handling so configuration is read from `plugins.entries.nerve.settings`; warn on the legacy ignored `hermes-nerve` block and preserve omitted profile-script settings instead of overwriting effective values.
 - Harden context-engine registration/loading, unknown-mode fallback, stats truthfulness, ledger session attribution, and worker profile secret-scope propagation.
@@ -8,9 +10,21 @@
 - Stop deterministic retry loops immediately on policy/permission/schema/path failures while preserving transient retry behavior.
 - Make implementation progress task-relative: scratch/repro edits do not count as completion progress, native mutation aliases such as `patch` are recognized consistently, and requested verification must actually pass before completion.
 - Detect repeated package/virtualenv/test-environment setup failures and force repository-native recovery instead of continuing environment thrash.
-- Release scope is maintenance-only: no Shared Context / issue #39 publication work, no policy-memory feature, no Deep Research Kit feature, and no ask-only gate mode feature are included in this RC.
+- Make Shared Context opt-in for all named profiles while HermesContextBus lacks a public install source; explicit local-source installation and explicit module enablement remain supported, and `setup --explain` no longer emits a missing-dependency warning when the module is disabled.
+- Sanitize historical machine-specific filesystem paths from public planning/evidence material before the final source tag.
+- Include the explicitly approved opt-in ask-only Action Gate from #41, hardened by #44 so BLOCK verdicts escalate with action-specific approval keys and registration honors the gate-mode environment fallback. Deep Research Kit (#37), block-review judge (#38), HermesContextBus publication (#40), and other unrelated 0.3.2 feature work remain outside this release.
 
-Verification target: Python 3.10–3.14 CI, release structural verification, plugin validation/doctor, focused completion/retry/progress regressions, and the canonical dev17 release gate.
+### Attribution
+
+- **@jcrabapple** — authored #20 (Hermes profile-aware secret resolution), #21 (gate probability telemetry), #22 (dual-signal p(ALLOW) enforce hardening), and #41 (opt-in ask-only Action Gate). #41 ships with the maintainer safety hardening from #44.
+- **@colibrishin** — reported #29 and authored the settings/context-engine/stats/ledger hardening series in #30, #31, #32, and #33.
+- **@omarabdo516** — reported #35, the multiplexed-gateway ContextVar/secret-scope failure that led to the worker/shadow context propagation fix.
+- **@HiroKws** — reported #39 and supplied the follow-up investigation that identified the unpublished HermesContextBus dependency and the correct public-facing setup failure mode.
+- **@keeltrace** — maintainer integration, regression campaign reconciliation, completion/retry/progress hardening, release engineering, and final maintenance assembly.
+
+AI-assisted implementation/review was used on parts of the maintenance work and is disclosed in the relevant PRs. Human-facing attribution above follows the public issue/PR authorship record.
+
+Verification gate for the final release: Python 3.10–3.14 CI, release structural verification, Plugin Validate/Doctor, focused completion/retry/progress/profile regressions, package integrity, and exact release-branch review.
 
 ## 0.3.0 — profiles, modular runtime, and release hardening
 

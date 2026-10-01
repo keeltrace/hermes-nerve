@@ -1,6 +1,6 @@
 # Nerve
 
-Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.1rc1` is a maintenance release candidate for the profile-aware `0.3.0` line: bug fixes, hardening, and QOL improvements only. It preserves the existing profile/module surface and does not add the pending Shared Context publication, policy-memory, Deep Research Kit, or ask-only gate features. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
+Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.1rc2` is the final release candidate for the stable `0.3.1` maintenance release for the profile-aware `0.3.0` line: it concentrates bug fixes, hardening, completion/retry integrity, configuration correctness, and setup QOL, plus the explicitly approved opt-in ask-only Action Gate from #41 with #44 hardening. Other 0.3.2 feature tracks remain separate. Shared Context remains supported but is opt-in until HermesContextBus has a public install source. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
 
 
 ## Dev17 — open backend release matrix
@@ -107,7 +107,7 @@ Nerve deliberately does **not** own canonical task status, dependencies, retries
 From the extracted final package:
 
 ```bash
-cd nerve-v0.3.1rc1
+cd nerve-v0.3.0
 bash scripts/install_dev17_profile.sh abtest-jev-dev17
 ```
 
@@ -202,7 +202,7 @@ For selected profiles, disabled modules are omitted from the Hermes model/runtim
 
 ### Shared Context
 
-Shared Context is an optional external integration. Nerve does **not** vendor HermesContextBus. Fat Cat and Operator enable the module by default; Lean and Marie Kondo keep it off pending factory A/B evidence.
+Shared Context is an optional external integration. Nerve does **not** vendor HermesContextBus. Because HermesContextBus is not currently published through a public install source, Shared Context is OFF by default in all named profiles. Users with an explicit local HermesContextBus checkout can opt in and install it manually.
 
 To inspect integration availability:
 

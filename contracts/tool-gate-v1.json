@@ -4,7 +4,8 @@
   "choices": ["ALLOW", "APPROVAL", "BLOCK"],
   "policy": {
     "low_confidence": "APPROVAL",
-    "provider_failure": "APPROVAL when enforce mode is enabled",
-    "advisory_mode": "record only"
+    "provider_failure": "APPROVAL when enforce or ask-only mode is enabled",
+    "advisory_mode": "record only",
+    "ask_only_block": "BLOCK verdict escalates to APPROVAL; classifier never hard-blocks"
   }
 }

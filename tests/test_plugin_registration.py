@@ -40,7 +40,7 @@ class RegistrationTests(unittest.TestCase):
             mod=self.load_plugin();ctx=FakeCtx(Path(td))
             with patch.object(mod.work_runtime,"configure",wraps=mod.work_runtime.configure) as work_config:
                 mod.register(ctx)
-            self.assertEqual(VERSION,"0.3.1rc1")
+            self.assertEqual(VERSION,"0.3.1rc2")
             self.assertEqual(set(ctx.tools),EXPECTED_TOOLS)
             self.assertNotIn("nerve_assistant",ctx.tools)
             self.assertEqual({n for n,_ in ctx.hooks},EXPECTED_HOOKS)
@@ -57,6 +57,17 @@ class RegistrationTests(unittest.TestCase):
             by_type={x["properties"]["type"]["enum"][0]:x for x in assess}
             self.assertEqual(by_type["choice"]["properties"]["criteria"]["minProperties"],2)
             self.assertEqual(by_type["score"]["properties"]["criteria"]["minItems"],2)
+
+    def test_legacy_registration_honors_gate_mode_env_fallback(self):
+        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ,{
+            "HERMES_HOME":td,
+            "HERMES_KANBAN_TASK":"",
+            "HERMES_KANBAN_TASK_ID":"",
+            "HERMES_NERVE_GATE_MODE":"ask-only",
+        },clear=False):
+            mod=self.load_plugin();ctx=FakeCtx(Path(td))
+            mod.register(ctx)
+            self.assertEqual(mod.gate.gate_mode(),"ask-only")
 
     def test_legacy_headless_zero_tools_and_success_log(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ,{
