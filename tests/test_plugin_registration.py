@@ -40,7 +40,7 @@ class RegistrationTests(unittest.TestCase):
             mod=self.load_plugin();ctx=FakeCtx(Path(td))
             with patch.object(mod.work_runtime,"configure",wraps=mod.work_runtime.configure) as work_config:
                 mod.register(ctx)
-            self.assertEqual(VERSION,"0.3.1")
+            self.assertEqual(VERSION,"0.3.1rc2")
             self.assertEqual(set(ctx.tools),EXPECTED_TOOLS)
             self.assertNotIn("nerve_assistant",ctx.tools)
             self.assertEqual({n for n,_ in ctx.hooks},EXPECTED_HOOKS)
