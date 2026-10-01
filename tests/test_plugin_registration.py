@@ -58,6 +58,17 @@ class RegistrationTests(unittest.TestCase):
             self.assertEqual(by_type["choice"]["properties"]["criteria"]["minProperties"],2)
             self.assertEqual(by_type["score"]["properties"]["criteria"]["minItems"],2)
 
+    def test_legacy_registration_honors_gate_mode_env_fallback(self):
+        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ,{
+            "HERMES_HOME":td,
+            "HERMES_KANBAN_TASK":"",
+            "HERMES_KANBAN_TASK_ID":"",
+            "HERMES_NERVE_GATE_MODE":"ask-only",
+        },clear=False):
+            mod=self.load_plugin();ctx=FakeCtx(Path(td))
+            mod.register(ctx)
+            self.assertEqual(mod.gate.gate_mode(),"ask-only")
+
     def test_legacy_headless_zero_tools_and_success_log(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ,{
             "HERMES_HOME":td,"HERMES_KANBAN_TASK":"legacy-pin","HERMES_KANBAN_RUN_ID":"1","HERMES_KANBAN_CLAIM_LOCK":"claim"
