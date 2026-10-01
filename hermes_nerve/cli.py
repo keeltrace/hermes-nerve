@@ -219,7 +219,10 @@ def main(argv=None):
     if args.show or args.explain:
         current = _current(); _show(current)
         if args.explain:
-            print("\nShared Context: " + shared_context.explain())
+            if current.enabled("shared_context"):
+                print("\nShared Context: " + shared_context.explain())
+            else:
+                print("\nShared Context: OFF (opt-in; install HermesContextBus from an explicit local source before enabling).")
         return 0
     target = args.profile or args.reset
     if target:
