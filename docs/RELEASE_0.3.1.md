@@ -1,6 +1,6 @@
 # Nerve v0.3.1 — final maintenance release
 
-Nerve 0.3.1 is the final bug-fix, hardening, and quality-of-life release for the 0.3.0 profile-aware line.
+Nerve 0.3.1 is the final stable maintenance, hardening, and quality-of-life release for the 0.3.0 profile-aware line. It also includes one deliberately approved, opt-in additive safety feature: @jcrabapple's ask-only Action Gate mode from #41, with the #44 maintainer hardening.
 
 It promotes the validated `v0.3.1rc1` maintenance baseline and adds the final public-facing setup correction for Shared Context. It deliberately does **not** pull 0.3.2 feature work into the maintenance release.
 
@@ -85,12 +85,22 @@ The following remain separate development/feature tracks:
 - Deep Research Kit — #37
 - block-review judge — #38
 - public HermesContextBus packaging/publication — #40
-- ask-only Action Gate feature and follow-up — #41 / #44
 - other 0.3.2 development work
 
 This boundary is intentional: 0.3.1 is a maintenance release, not a feature aggregation release.
 
 ## Attribution
+
+### @jcrabapple
+
+Authored the contributor series that hardened Nerve's provider and Action Gate behavior:
+
+- #20 — resolve provider credentials through Hermes' profile-aware secret scope instead of relying on ambient process environment
+- #21 — record bounded answer distributions in gate telemetry so operators can inspect the signal actually used by the classifier
+- #22 — require both calibration confidence and p(ALLOW) for enforce-mode automatic continuation
+- #41 — add the opt-in ask-only enforce mode so BLOCK verdicts escalate to human approval rather than becoming a classifier-owned hard stop
+
+#41 is included in v0.3.1 together with the maintainer safety hardening from #44: action-specific approval keys, registration-time environment fallback, contract updates, and focused regressions.
 
 ### @colibrishin
 
