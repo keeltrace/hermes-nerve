@@ -12,10 +12,11 @@ Finalizes the 0.3.1 maintenance line from `v0.3.1rc1`.
 - Detect repeated package/virtualenv/test-environment setup failures and force repository-native recovery instead of continuing environment thrash.
 - Make Shared Context opt-in for all named profiles while HermesContextBus lacks a public install source; explicit local-source installation and explicit module enablement remain supported, and `setup --explain` no longer emits a missing-dependency warning when the module is disabled.
 - Sanitize historical machine-specific filesystem paths from public planning/evidence material before the final source tag.
-- Keep the release maintenance-only: Deep Research Kit (#37), block-review judge (#38), HermesContextBus publication (#40), ask-only gate mode (#41/#44), and other 0.3.2 feature work remain outside this release.
+- Include the explicitly approved opt-in ask-only Action Gate from #41, hardened by #44 so BLOCK verdicts escalate with action-specific approval keys and registration honors the gate-mode environment fallback. Deep Research Kit (#37), block-review judge (#38), HermesContextBus publication (#40), and other unrelated 0.3.2 feature work remain outside this release.
 
 ### Attribution
 
+- **@jcrabapple** — authored #20 (Hermes profile-aware secret resolution), #21 (gate probability telemetry), #22 (dual-signal p(ALLOW) enforce hardening), and #41 (opt-in ask-only Action Gate). #41 ships with the maintainer safety hardening from #44.
 - **@colibrishin** — reported #29 and authored the settings/context-engine/stats/ledger hardening series in #30, #31, #32, and #33.
 - **@omarabdo516** — reported #35, the multiplexed-gateway ContextVar/secret-scope failure that led to the worker/shadow context propagation fix.
 - **@HiroKws** — reported #39 and supplied the follow-up investigation that identified the unpublished HermesContextBus dependency and the correct public-facing setup failure mode.
