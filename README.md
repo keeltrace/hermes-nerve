@@ -1,8 +1,8 @@
 # Nerve
 
-> **Development status:** current `main` identifies as `0.3.2.dev0`. It is the post-0.3.0 development line and includes the ask-only gate work plus maintenance fixes merged after the separate `v0.3.1rc1` cut. The published `v0.3.1rc1` is an immutable maintenance-only release candidate and intentionally excludes ask-only; it is not the same tree as current `main`. The latest stable release remains `v0.3.0` until a later release is promoted, and the public Hermes catalog entry intentionally stays pinned to `0.3.0` while `main` carries a `.dev` version.
+> **Development status:** current `main` identifies as `0.3.2.dev0`. The latest stable release is `v0.3.1`, published from its reviewed release commit. `main` contains post-0.3.1 development work and is not the same tree as the stable release. Hermes catalog installs follow exact reviewed commit-SHA pins and may lag `main` until a catalog SHA-bump PR is reviewed and merged.
 
-Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.0` is the profile-aware modular release: it adds Nerve setup personalities, hard-OFF module semantics, Assistant Accountability, optional Shared Context integration, profile/runtime truthfulness, stronger persistence and path trust boundaries, and release/package hardening while preserving v0.2.3-compatible Legacy behavior when no profile is selected. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
+Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.1` is the stable maintenance release for the profile-aware `0.3.0` line: it concentrates bug fixes, hardening, completion/retry integrity, configuration correctness, setup QOL, and the explicitly approved opt-in ask-only Action Gate while preserving v0.2.3-compatible Legacy behavior when no profile is selected. Other `0.3.2` feature work remains on the development line. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
 
 
 ## Dev17 — open backend release matrix
@@ -109,7 +109,7 @@ Nerve deliberately does **not** own canonical task status, dependencies, retries
 From the extracted final package:
 
 ```bash
-cd nerve-v0.3.0
+cd nerve-v0.3.1
 bash scripts/install_dev17_profile.sh abtest-jev-dev17
 ```
 
