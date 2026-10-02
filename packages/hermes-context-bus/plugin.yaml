@@ -1,0 +1,29 @@
+name: hermes-context-bus
+version: "0.2.0"
+manifest_version: 2
+api_version: 1
+description: Durable shared context and agent-to-agent coordination across Hermes surfaces with local SQLite and optional MCP blackboard backends.
+provides_tools:
+  - shared_context_health
+  - shared_context_post
+  - shared_context_send
+  - shared_context_inbox
+  - shared_context_thread
+  - shared_context_ack
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call
+config_schema:
+  backend: {type: str, default: "auto", description: "Backend mode: auto, sqlite, or megamcp"}
+  sqlite_path: {type: str, default: "~/.hermes/shared-context/context.db", description: "Local SQLite database path"}
+  projection_path: {type: str, default: "~/.hermes/shared-context/shared-context.md", description: "Derived Markdown projection path"}
+  server: {type: str, default: "megamcp", description: "Optional Hermes MCP server id"}
+  timeout: {type: float, default: 15.0, description: "MCP call timeout in seconds"}
+  context_limit: {type: int, default: 3500, description: "Maximum injected shared-context characters"}
+  board_limit: {type: int, default: 20, description: "Recent board entries to read per turn"}
+  inbox_limit: {type: int, default: 20, description: "Unread inbox messages to read per turn"}
+  auto_handoff: {type: bool, default: true, description: "Automatically post bounded completed-turn handoffs"}
+  auto_handoff_min_chars: {type: int, default: 240, description: "Minimum assistant response length for automatic handoff"}
+  auto_handoff_body_chars: {type: int, default: 2400, description: "Maximum automatic handoff body size"}
+  include_user_message: {type: bool, default: true, description: "Include a bounded user-goal excerpt in automatic handoffs"}
+tags: [context, multi-agent, messaging]
