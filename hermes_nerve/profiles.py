@@ -21,8 +21,8 @@ class ProfileStateError(RuntimeError):
 
 PROFILE_NAMES = ("fat_cat", "operator", "lean", "marie_kondo", "custom", "legacy")
 _ENABLED = {
-    "fat_cat": set(MODULES) - {"shadow_testing"},
-    "operator": {"reflex", "nervous", "action_gate", "context_governor", "shared_context", "receipts", "local_learning"},
+    "fat_cat": set(MODULES) - {"shadow_testing", "shared_context"},
+    "operator": {"reflex", "nervous", "action_gate", "context_governor", "receipts", "local_learning"},
     "lean": {"reflex", "nervous", "work_supervision", "token_trajectory", "receipts"},
     "marie_kondo": {"reflex", "work_supervision", "token_trajectory", "receipts"},
     "custom": set(),
