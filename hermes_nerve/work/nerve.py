@@ -318,8 +318,17 @@ def evaluate(supervisor, identity: RunIdentity, *, lifecycle_state: str = "", cf
             base_target, extension_tokens, extension_round, utc_now(),
         )
 
-    # MAYBE is always a main-orchestrator decision. A NO forecast gets a short bounded
-    # checkpoint window, then hands off by the configured consumed-budget fraction.
+    # MAYBE is always a main-orchestrator decision — EXCEPT when the MAYBE is not
+    # a judgment at all but an unavailable forecast (judge API down / key limit).
+    # Fencing a worker on missing data manufactures the "agent stuck" state the
+    # supervisor exists to prevent (Tests 10f-12b, 2026-09-28): fail open to WATCH.
+    if forecast_value == "MAYBE" and str(forecast.get("reason") or "").startswith("forecast unavailable"):
+        return NerveDecision(
+            "WATCH", 0.0,
+            "forecast unavailable (judge backend unreachable): no tool-fencing handoff; continue without broadening scope",
+            target, consumed, ratio, calls, repeats, high_ctx, False, False,
+            base_target, extension_tokens, extension_round, utc_now(),
+        )
     if forecast_value == "MAYBE":
         return NerveDecision(
             "ORCH_REVIEW", float(forecast.get("confidence") or 0.5),

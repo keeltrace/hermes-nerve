@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .models import DoDContract, EvidenceRecord, RunIdentity, TrajectoryAssessment, WorkEvent
+from .models import DoDContract, EvidenceRecord, RunIdentity, TrajectoryAssessment, WorkEvent, utc_now
 
 
 SCHEMA_VERSION = 2
@@ -548,6 +548,31 @@ class SupervisionStore:
                     json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str), created_at,
                 ),
             )
+
+    def clear_control(self, identity: RunIdentity, *, reason: str) -> bool:
+        """Acknowledge (clear) the active control for this run.
+
+        Used when the cause of a control has provably passed — e.g. a tool-fatal
+        REPLAN staged only because the judge backend was unreachable, which is
+        later proven recovered by a successful Jev call. Controls are never
+        cleared blind: the caller supplies the recovery evidence in `reason`.
+        """
+        if not self.is_current(identity):
+            return False
+        with self.transaction() as con:
+            cur = con.execute(
+                """UPDATE run_controls SET acknowledged=1
+                   WHERE task_id=? AND run_id=? AND contract_hash=? AND acknowledged=0""",
+                (identity.task_id, identity.run_id, identity.contract_hash),
+            )
+            cleared = cur.rowcount > 0
+        if cleared:
+            self.add_diagnostic(
+                task_id=identity.task_id, run_id=identity.run_id,
+                kind="nerve_control_cleared",
+                payload={"reason": reason}, created_at=utc_now(),
+            )
+        return cleared
 
     def control(self, identity: RunIdentity) -> dict[str, Any] | None:
         with self.read() as con:

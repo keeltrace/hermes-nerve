@@ -158,7 +158,7 @@ def _native_completion_args(sup, identity, proposal: dict[str, Any], verdict) ->
     # real harness-owned deliverable and removes a semantic completion veto.
     deterministic_summary = None
     try:
-        deterministic_summary = canonical_completion_summary(sup, identity)
+        deterministic_summary = canonical_completion_summary(sup, identity, proposal=proposal)
     except Exception:
         deterministic_summary = None
     summary = str(
@@ -299,6 +299,37 @@ def _complete_verified_run(sup, identity, proposal: dict[str, Any], verdict, *, 
             _set_terminal_lifecycle(sup, identity, verdict, "COMPLETED", attempts=number, last_result=text)
             return True, text
     _set_terminal_lifecycle(sup, identity, verdict, "COMPLETION_RETRY", attempts=total, last_result=last)
+    # R1b lesson (2026-09-28): exhausted completions used to re-enter via the
+    # lifecycle hook and re-dispatch up to 13x (~880k tokens) with zero new
+    # information. Convert the burn into ONE escalation receipt for the human:
+    # stage a block-review card carrying the judge's exact rejection feedback
+    # and mark retries exhausted so re-entries stop here.
+    try:
+        from .block_review import stage_for_jev, BlockReview
+        review = BlockReview(
+            verdict="ESCALATE",
+            card={
+                "task_id": identity.task_id,
+                "run_id": identity.run_id,
+                "block_reason": f"Completion rejected {total}x by the goal-mode judge; controller retries exhausted.",
+                "judge_feedback": str(last)[:2000],
+                "variants_tried": None,
+                "budget_fraction_consumed": None,
+                "claim_checks": [],
+                "refuted_claims": [],
+                "semantic_laziness_flags": ["completion-retries-exhausted"],
+            },
+            reasons=["completion retries exhausted: judge feedback attached for human review"],
+        )
+        stage_for_jev(sup.store, identity, review)
+    except Exception:
+        pass
+    sup.store.add_diagnostic(
+        task_id=identity.task_id, run_id=identity.run_id,
+        kind="completion_retries_exhausted",
+        payload={"attempts": total, "last_result": str(last)[:1200]},
+        created_at=utc_now(),
+    )
     return False, last
 
 
@@ -476,6 +507,11 @@ def pre_llm_call(*, task_id: str = "", session_id: str = "", **kwargs: Any):
 
 
 def pre_tool_call(tool_name: str, args: dict, task_id: str | None = None, session_id: str = "", **kwargs):
+    try:
+        with open("/tmp/jev_branch_probe.txt", "a") as _pf:
+            _pf.write(f"PRE tool={tool_name} task={task_id}\n")
+    except Exception:
+        pass
     if not enabled():
         return None
     identity = _identity(task_id, session_id=session_id)
@@ -585,6 +621,45 @@ def pre_tool_call(tool_name: str, args: dict, task_id: str | None = None, sessio
             "message": bypass_reason,
             "rule_key": "jev:work-kanban-authority",
         }
+
+    if name == "kanban_block":
+        try:
+            with open("/tmp/jev_branch_probe.txt", "a") as _pf:
+                _pf.write(f"BRANCH-ENTERED task={identity.task_id}\n")
+        except Exception:
+            pass
+
+    # Block-review loop (Tests 5-10): a worker block is never terminally
+    # accepted on prose. Deterministic first pass -> REFUTE/CONTINUE bounces
+    # with the counterexample/work order; ESCALATE lets the native block
+    # through and stages the evidence card for the reviewer lane (Jev).
+    if name == "kanban_block":
+        try:
+            from .block_review import review_block, stage_for_jev, bounce_message
+            review = review_block(
+                sup, identity, reason=str((args or {}).get("reason") or "")
+            )
+            stage_for_jev(sup.store, identity, review)
+            sup.store.add_diagnostic(
+                task_id=identity.task_id, run_id=identity.run_id,
+                kind="nerve_block_review_ran",
+                payload={"verdict": review.verdict, "reasons": review.reasons},
+                created_at=utc_now(),
+            )
+            if review.bounce:
+                return bounce_message(review)
+        except Exception as exc:
+            # fail-open: a broken reviewer must never trap an honest worker,
+            # but the failure itself must be visible (Tests 10b/10c lesson)
+            try:
+                sup.store.add_diagnostic(
+                    task_id=identity.task_id, run_id=identity.run_id,
+                    kind="nerve_block_review_failed",
+                    payload={"error": f"{type(exc).__name__}: {exc}"},
+                    created_at=utc_now(),
+                )
+            except Exception:
+                pass
 
     # Backward-compatible fallback for plugin hosts that do not expose
     # dispatch_tool. Only the dispatcher-owned worker may call native completion.
@@ -748,6 +823,13 @@ def _nerve_review_handoff(sup, identity, decision, *, forecast: dict[str, Any] |
     return payload
 
 
+
+def value_ok(forecast: dict) -> bool:
+    """True when the forecast carries a real backend answer (not an unavailable placeholder)."""
+    return str(forecast.get("value") or "").upper() in {"YES", "NO", "MAYBE"} and not str(
+        forecast.get("reason") or ""
+    ).startswith("forecast unavailable")
+
 def _nerve_observe_and_act(sup, identity, *, lifecycle_state: str = "") -> dict[str, Any] | None:
     cfg = settings()
     if not bool(cfg.get("nerve_observer_enabled", True)):
@@ -785,6 +867,20 @@ def _nerve_observe_and_act(sup, identity, *, lifecycle_state: str = "") -> dict[
                 task_id=identity.task_id, run_id=identity.run_id, kind="nerve_budget_forecast",
                 payload=forecast, created_at=utc_now(),
             )
+            # Judge-backend recovery: if the forecast just succeeded and the run
+            # carries a tool-fatal control that was staged by a forecast-unavailable
+            # path, clear it. (Test 12b: a stale REPLAN blocked a finished worker
+            # from re-certifying — the control outlived its cause.)
+            if str(forecast.get("reason") or "").startswith("forecast unavailable") is False and value_ok(forecast):
+                try:
+                    control = sup.store.control(identity)
+                    if control and "forecast unavailable" in str(control.get("payload_json") or ""):
+                        sup.store.clear_control(
+                            identity,
+                            reason="judge backend recovered: successful forecast; clearing stale forecast-unavailable control",
+                        )
+                except Exception:
+                    pass
             value = str(forecast.get("value") or "MAYBE").upper()
             if value == "YES":
                 base = max(1, int(forecast.get("base_token_target") or decision.base_token_target or decision.token_target))
@@ -816,6 +912,24 @@ def _nerve_observe_and_act(sup, identity, *, lifecycle_state: str = "") -> dict[
                 )
                 return {**payload, "forecast": forecast, "extension": ext}
             if value == "MAYBE":
+                # Fail-open (Test 10f/11 lesson): a forecast that is unavailable
+                # (judge API down, key limit, timeout) is NOT evidence of a bad
+                # trajectory. Fencing tools on missing data manufactured the very
+                # "agent stuck" state the supervisor exists to prevent — three
+                # live runs died this way on 2026-09-28. On unavailable forecasts:
+                # stage a bounded WATCH directive, never a tool-fatal handoff.
+                if str(forecast.get("reason") or "").startswith("forecast unavailable"):
+                    sup.store.stage_directive(
+                        identity,
+                        decision_id=f"nerve-extension-unavailable-{identity.run_id}-{decision.api_calls}",
+                        directive=(
+                            "Nerve forecast unavailable (judge backend unreachable): continuing WITHOUT a tool-fencing "
+                            "handoff. Do not broaden scope; finish the current plan and rely on your own acceptance checks."
+                        ),
+                        confidence=0.0,
+                        created_at=utc_now(),
+                    )
+                    return {**payload, "forecast": forecast, "fail_open": True}
                 review_decision = evaluate_nerve(sup, identity, lifecycle_state=lifecycle_state, cfg=cfg)
                 # evaluate now observes the persisted MAYBE and yields ORCH_REVIEW.
                 return _nerve_review_handoff(sup, identity, review_decision, forecast=forecast)
@@ -905,10 +1019,20 @@ def post_api_request(*, task_id: str = "", session_id: str = "", api_request_id:
     # run does the nerve observer escalate to the kill switch.
     if state in {"VERIFIED", "COMPLETING", "COMPLETION_RETRY"} and tool_dispatcher_available():
         try:
-            prior = _prior_verdict(control)
-            _complete_verified_run(sup, identity, {"trigger": "post_verified_provider_call"}, prior)
-            control = sup.control_for_run(identity)
-            state = _terminal_state(control)
+            exhausted = sup.store.latest_diagnostic(
+                task_id=identity.task_id, run_id=identity.run_id,
+                kind="completion_retries_exhausted",
+            )
+            if exhausted:
+                # Retries already burned out; a re-dispatch cannot add new
+                # evidence. One escalation receipt exists (block-review card
+                # with judge feedback) — do not re-enter the run.
+                pass
+            else:
+                prior = _prior_verdict(control)
+                _complete_verified_run(sup, identity, {"trigger": "post_verified_provider_call"}, prior)
+                control = sup.control_for_run(identity)
+                state = _terminal_state(control)
         except Exception:
             pass
     _nerve_observe_and_act(sup, identity, lifecycle_state=state)
