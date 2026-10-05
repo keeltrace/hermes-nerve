@@ -14,6 +14,49 @@ CHANGE_REQUIRED_RE = re.compile(r"\b(?:fix|implement|modify|patch|repair|refacto
 VERIFY_REQUIRED_RE = re.compile(r"\b(?:test|tests|verify|verification|regression|check)\b", re.IGNORECASE)
 PATH_RE = re.compile(r"(?<![\w.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9]{1,12})(?![\w.-])")
 
+# Harness-supplied instruction files (Paperclip agent instructions, wake payloads,
+# execution contracts) are not a task statement. Deriving "this turn must change
+# code" from them produces an unsatisfiable completion block: the verbs are
+# ordinary prose ("update the issue to a clear final disposition") and the
+# extracted paths are harness-internal files the turn must not touch.
+HARNESS_INSTRUCTION_MARKERS = (
+    "paperclip wake payload",
+    "paperclip_task_id",
+    "paperclip_api_key",
+    "paperclip_api_url",
+    "paperclip_api_base",
+    "paperclip_api_guidance",
+    "paperclip runtime identity",
+    "paperclip-run-scratch",
+    "paperclip_scratch_dir",
+    "paperclip_task_context",
+    "execution contract",
+    "agent instructions",
+    "issue-thread interaction",
+    "skills/paperclip/scripts/paperclip-upload-artifact.sh",
+)
+
+# Path prefixes/segments that belong to the agent harness, not to the user's
+# project. They must never be treated as "requested change targets".
+HARNESS_PATH_PREFIXES = (
+    "skills/paperclip/",
+    ".paperclip/",
+    "hermes-agent/skills/paperclip/",
+    "node_modules/@paperclipai/",
+    "api/issues/",
+    "api/agents/",
+    "api/companies/",
+    "api/projects/",
+    "agents/companies/",
+    "instances/default/",
+)
+HARNESS_PATH_SEGMENTS = frozenset({"@paperclipai"})
+HARNESS_PATH_NAMES = frozenset({"paperclip-upload-artifact.sh"})
+HARNESS_INSTRUCTIONS_NAMES = frozenset({"agents.md", "instructions.md"})
+# camelCase segments are API/JSON field names ("metadata.resourceRef.kind"),
+# never a file the turn is asked to change.
+CAMEL_CASE_SEGMENT_RE = re.compile(r"^[a-z0-9]+[A-Z]")
+
 TOOL_ALIASES: dict[str, frozenset[str]] = {
     "mutation": frozenset({
         "write_file", "edit_file", "patch", "patch_file", "apply_patch", "replace_file",
@@ -52,19 +95,62 @@ SCRATCH_NAMES = {
 }
 
 
+def harness_instructions_message(user_message: str) -> bool:
+    """True when the "user message" is really an agent harness instruction file.
+
+    A Paperclip (or comparable) heartbeat loads the agent instructions file
+    verbatim as the prompt. That text describes process, not a task, so any
+    change/verify obligation derived from it is unsatisfiable by construction.
+    """
+    text = str(user_message or "").casefold()
+    if not text:
+        return False
+    return any(marker in text for marker in HARNESS_INSTRUCTION_MARKERS)
+
+
 def change_required(user_message: str) -> bool:
-    return bool(CHANGE_REQUIRED_RE.search(str(user_message or "")))
+    message = str(user_message or "")
+    if harness_instructions_message(message):
+        return False
+    return bool(CHANGE_REQUIRED_RE.search(message))
 
 
 def verification_required(user_message: str) -> bool:
-    return bool(VERIFY_REQUIRED_RE.search(str(user_message or "")))
+    message = str(user_message or "")
+    if harness_instructions_message(message):
+        return False
+    return bool(VERIFY_REQUIRED_RE.search(message))
+
+
+def is_harness_path(path: str) -> bool:
+    """Harness-internal paths are never legitimate change targets for a task."""
+    normalized = _normalize_path(path).casefold().lstrip("/")
+    if not normalized:
+        return False
+    if normalized.startswith(HARNESS_PATH_PREFIXES):
+        return True
+    pure = PurePosixPath(normalized)
+    parts = pure.parts
+    if pure.name in HARNESS_PATH_NAMES:
+        return True
+    if pure.name in HARNESS_INSTRUCTIONS_NAMES and "instructions" in parts[:-1]:
+        return True
+    return any(part in HARNESS_PATH_SEGMENTS for part in parts[:-1])
+
+
+def looks_like_api_field(path: str) -> bool:
+    """True for JSON/API field tokens the path regex mistakes for a filename."""
+    normalized = _normalize_path(path)
+    if not normalized or "/" in normalized:
+        return False
+    return any(CAMEL_CASE_SEGMENT_RE.match(part) for part in normalized.split("."))
 
 
 def requested_paths(user_message: str) -> tuple[str, ...]:
     seen: list[str] = []
     for raw in PATH_RE.findall(str(user_message or "")):
         path = _normalize_path(raw)
-        if path and path not in seen:
+        if path and not is_harness_path(path) and not looks_like_api_field(path) and path not in seen:
             seen.append(path)
     return tuple(seen[:32])
 
