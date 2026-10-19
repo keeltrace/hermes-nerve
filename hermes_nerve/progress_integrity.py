@@ -62,7 +62,12 @@ def verification_required(user_message: str) -> bool:
 
 def requested_paths(user_message: str) -> tuple[str, ...]:
     seen: list[str] = []
-    for raw in PATH_RE.findall(str(user_message or "")):
+    cleaned = str(user_message or "")
+    cleaned = re.sub(r"@?url:[^\s]+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"https?://[^\s`]+", "", cleaned, flags=re.IGNORECASE)
+    for raw in PATH_RE.findall(cleaned):
+        if re.match(r"^\d+(?:\.\d+)+$", raw):
+            continue
         path = _normalize_path(raw)
         if path and path not in seen:
             seen.append(path)

@@ -31,6 +31,27 @@ class ProgressIntegrityQolTests(unittest.TestCase):
             )
         )
 
+    def test_urls_and_metrics_not_treated_as_requested_paths(self):
+        msg = "Update monitor: buzz_platform 378.5 ms https://buzz.ptdev.vip/ and @url:https://honcho-api.ptdev.vip/health"
+        targets = requested_paths(msg)
+        self.assertEqual(targets, ())
+        self.assertTrue(mutation_is_relevant("patch", {"path": "scripts/watchdog_htop.py"}, targets))
+
+    def test_case_insensitive_url_and_marker_stripping(self):
+        cases = [
+            ("HTTPS://EXAMPLE.COM/foo.py", ()),
+            ("Https://example.com/sub/bar.py", ()),
+            ("@URL:https://example.com/api/test.py", ()),
+            ("@url:HTTPS://EXAMPLE.COM/spec.py", ()),
+            ("URL:HTTP://SERVER/index.html", ()),
+            ("HTTPS://EXAMPLE.COM/foo.py then fix src/parser.py", ("src/parser.py",)),
+            ("Check @URL:https://host/doc.md and update lib/utils.py and tests/test_run.py", ("lib/utils.py", "tests/test_run.py")),
+            ("Mixed HttP://ExAmPlE.CoM/bar.py followed by a/b/c.py", ("a/b/c.py",)),
+        ]
+        for msg, expected in cases:
+            with self.subTest(msg=msg):
+                self.assertEqual(requested_paths(msg), expected)
+
     def test_scratch_mutation_does_not_clear_progress_stall(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
             "HERMES_NERVE_NERVOUS_EVENTS": str(Path(td) / "nervous.jsonl"),
