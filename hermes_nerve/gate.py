@@ -37,6 +37,13 @@ _DEFAULT_READ_ONLY_TOOLS = frozenset({
     "mnemosyne_graph_query",
     "mnemosyne_sync_status",
     "spotify_search",
+    # Introspective Kanban/skill reads: no side effects, previously escalated as
+    # per-argument block hashes that bloated command_allowlist.
+    "kanban_list",
+    "kanban_show",
+    "kanban_attachments",
+    "skill_view",
+    "skills_list",
 })
 _SIMPLE_READ_ONLY_COMMANDS = frozenset({
     "pwd", "ls", "cat", "head", "tail", "wc", "stat", "du", "df", "file",

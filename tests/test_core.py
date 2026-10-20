@@ -472,6 +472,13 @@ class GateTests(unittest.TestCase):
             ):
                 self.assertIsNone(gate.bypass_reason("terminal", {"command": command}), command)
 
+    def test_selective_bypass_covers_introspective_kanban_and_skill_tools(self):
+        with patch.dict(os.environ, {"HERMES_NERVE_GATE_SCOPE": "selective"}, clear=False):
+            for tool_name in ("kanban_list", "kanban_show", "kanban_attachments", "skill_view", "skills_list"):
+                self.assertEqual(gate.bypass_reason(tool_name, {"task_id": "t_x"}), "read-only-tool", tool_name)
+            for tool_name in ("kanban_complete", "kanban_create", "kanban_block", "skill_manage", "kanban_attach"):
+                self.assertIsNone(gate.bypass_reason(tool_name, {}), tool_name)
+
     def test_gate_scope_all_preserves_evaluate_everything_compatibility(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
             "HERMES_NERVE_GATE_MODE": "advisory",
