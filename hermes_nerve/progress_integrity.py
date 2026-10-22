@@ -32,7 +32,15 @@ TERMINAL_MUTATION_PREFIXES = (
 TERMINAL_TEST_PREFIXES = (
     "pytest", "python -m pytest", "python3 -m pytest", "python -m unittest",
     "python3 -m unittest", "npm test", "pnpm test", "yarn test", "go test", "cargo test",
+    "py.test", "tox", "nox", "make test", "make check", "jest", "vitest", "mocha", "bun test",
+    "deno test", "npx jest", "npx vitest", "npx mocha", "pnpm exec jest", "pnpm exec vitest",
+    "dotnet test", "mvn test", "gradle test", "./gradlew test", "rspec", "bundle exec rspec",
+    "phpunit", "vendor/bin/phpunit", "mix test", "swift test", "ctest", "pytest.exe",
 )
+# Shell wrappers whose real command is the quoted argument: bash -c "pytest -q".
+_SHELL_WRAP_RE = re.compile(r"^(?:ba|z|da|)sh\s+(?:-[a-z]+\s+)*-c\s+(['\"])(.*)\1\s*$")
+# Project test scripts: ./scripts/test.sh, ./run_tests.sh, scripts/test.
+_TEST_SCRIPT_RE = re.compile(r"^(?:\./|bash\s+|sh\s+)?(?:\S+/)?(?:run[_-]?tests?|tests?|check)(?:\.(?:sh|bash|py))?(?:\s|$)")
 ENV_SETUP_PREFIXES = (
     "pip install", "pip3 install", "python -m pip install", "python3 -m pip install",
     "uv pip install", "uv sync", "poetry install", "poetry add", "pipenv install",
@@ -98,6 +106,11 @@ def _strip_command_prefix(segment: str) -> str:
     # `pdm run`, `hatch run` and `conda run -n env` only choose the environment;
     # the command that follows is what actually runs.
     segment = _LAUNCHER_RE.sub("", segment)
+    wrapped = _SHELL_WRAP_RE.match(segment)
+    if wrapped:
+        return _strip_command_prefix(wrapped.group(2).strip())
+    # Windows paths: C:\\repo\\Scripts\\pytest.exe -> pytest.exe
+    segment = re.sub(r"^[a-z]:\\(?:[^\\\s]+\\)*", "", segment)
     segment = _PYTHON_PATH_RE.sub(lambda m: m.group(1), segment)
     # Interpreter flags such as -B/-u/-I before "-m pytest" do not change what runs.
     return re.sub(r"^(python3?(?:\.\d+)?)((?:\s+-[a-ln-z]+)+)(?=\s+-m\s)", r"\1", segment)
@@ -120,7 +133,17 @@ def tool_kind(tool_name: str, args: dict[str, Any] | None = None) -> str:
             return "test"
         if _DIRECT_TEST_RE.search(segment):
             return "test"
+        if _TEST_SCRIPT_RE.match(segment):
+            return "test"
     return ""
+
+
+def test_result_masked(command: str) -> bool:
+    """True when the shell line hides the test exit status, e.g. ``pytest || true``."""
+    raw = str(command or "").lower()
+    if re.search(r"\|\|\s*(?:true|:|exit\s+0)\b", raw):
+        return True
+    return bool(re.search(r";\s*(?:true|exit\s+0)\s*$", raw))
 
 
 
@@ -210,6 +233,8 @@ def changed_paths_relevant(changed_paths: list[str] | tuple[str, ...], requested
 
 
 _NO_TESTS_RE = re.compile(r"no tests ran|collected 0 items|\bran 0 tests?\b|\b0 passed\b|no tests (were )?(found|collected)")
+_FAIL_WORD_RE = re.compile(r"\b(?:fail|failed|failure|failures|error|errors)\b(?![\w.-]*(?:\.py|\.js|\.ts|::))")
+_PASS_SUMMARY_RE = re.compile(r"\b\d+ passed\b|\btests?:\s*\d+ passed\b|\btest result: ok\b|^ok\b")
 _ZERO_FAILURE_RE = re.compile(r"\b0 (failed|failures?|errors?)\b|failures?=0|errors?=0")
 
 
@@ -234,7 +259,13 @@ def test_succeeded(status: str, result: str = "", error_message: str = "") -> bo
     if _NO_TESTS_RE.search(text):
         return False
     text = _ZERO_FAILURE_RE.sub(" ", text)
-    return not any(token in text for token in ("failed", "failure", "error", "traceback"))
+    if "traceback" in text:
+        return False
+    # Match whole words only: a passing test_error_handling or ErrorHandler.test.js
+    # is not a failure. A pass summary with no failing count is trusted.
+    if _PASS_SUMMARY_RE.search(text) and not _FAIL_WORD_RE.search(text):
+        return True
+    return not _FAIL_WORD_RE.search(text)
 
 
 def _normalize_path(value: str) -> str:
