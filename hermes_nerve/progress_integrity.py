@@ -6,6 +6,7 @@ with task-relative progress.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import PurePosixPath
 from typing import Any
@@ -73,6 +74,21 @@ def _shell_segments(command: str) -> list[str]:
     return [part.strip().lower() for part in re.split(r"(?:&&|\|\||;|\n)", str(command or "")) if part.strip()]
 
 
+_DIRECT_TEST_RE = re.compile(r"^(?:uv run\s+)?python3?(?:\s+-\S+)*\s+(?:-c\s+.*)?\S*\btest_\w+\.py\b|^(?:uv run\s+)?python3?(?:\s+-\S+)*\s+\S*_test\.py\b")
+
+
+_ENV_ASSIGN_RE = re.compile(r"^(?:env\s+)?(?:[a-z_][a-z0-9_]*=\S*\s+)+")
+_PYTHON_PATH_RE = re.compile(r"^\S*/(?:bin/)?(python3?(?:\.\d+)?|pytest|py\.test)(?=\s|$)")
+
+
+def _strip_command_prefix(segment: str) -> str:
+    """Drop leading VAR=value assignments and venv paths so `X=1 .venv/bin/python -m pytest` reads as a test."""
+    segment = _ENV_ASSIGN_RE.sub("", segment)
+    segment = _PYTHON_PATH_RE.sub(lambda m: m.group(1), segment)
+    # Interpreter flags such as -B/-u/-I before "-m pytest" do not change what runs.
+    return re.sub(r"^(python3?(?:\.\d+)?)((?:\s+-[a-ln-z]+)+)(?=\s+-m\s)", r"\1", segment)
+
+
 def tool_kind(tool_name: str, args: dict[str, Any] | None = None) -> str:
     selected = str(tool_name or "").strip().lower()
     for kind, aliases in TOOL_ALIASES.items():
@@ -81,11 +97,14 @@ def tool_kind(tool_name: str, args: dict[str, Any] | None = None) -> str:
     if selected != "terminal":
         return ""
     for segment in _shell_segments(str((args or {}).get("command") or "")):
+        segment = _strip_command_prefix(segment)
         if any(segment == p.strip() or segment.startswith(p) for p in TERMINAL_MUTATION_PREFIXES):
             return "mutation"
         if ">" in segment and not any(op in segment for op in (">=", "2>", "&>")):
             return "mutation"
         if any(segment == p or segment.startswith(p + " ") for p in TERMINAL_TEST_PREFIXES):
+            return "test"
+        if _DIRECT_TEST_RE.search(segment):
             return "test"
     return ""
 
@@ -142,6 +161,12 @@ def mutation_paths(tool_name: str, args: dict[str, Any] | None = None) -> tuple[
             path = _normalize_path(raw)
             if path and path not in paths:
                 paths.append(path)
+        # Hermes' native patch tool uses V4A envelopes ("*** Update File: <path>").
+        for raw in re.findall(r"(?m)^\*\*\*\s+(?:Update|Add|Delete) File:\s*(.+?)\s*$|^\*\*\*\s+Move to:\s*(.+?)\s*$", patch):
+            for candidate in raw:
+                path = _normalize_path(candidate)
+                if path and path not in paths:
+                    paths.append(path)
     return tuple(paths[:32])
 
 
@@ -170,10 +195,31 @@ def changed_paths_relevant(changed_paths: list[str] | tuple[str, ...], requested
     return any(not _looks_like_scratch(path) for path in normalized)
 
 
+_NO_TESTS_RE = re.compile(r"no tests ran|collected 0 items|\bran 0 tests?\b|\b0 passed\b|no tests (were )?(found|collected)")
+_ZERO_FAILURE_RE = re.compile(r"\b0 (failed|failures?|errors?)\b|failures?=0|errors?=0")
+
+
 def test_succeeded(status: str, result: str = "", error_message: str = "") -> bool:
     if str(status or "").strip().lower() not in {"ok", "success", "passed", "pass"}:
         return False
+    result = str(result or "")
+    try:
+        payload = json.loads(result) if result.lstrip().startswith("{") else None
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and ("output" in payload or "exit_code" in payload):
+        # Hermes terminal results are JSON envelopes; an empty "error": null key is not a failure.
+        exit_code = payload.get("exit_code")
+        if exit_code not in (None, 0, "0"):
+            return False
+        if payload.get("error"):
+            return False
+        result = str(payload.get("output") or "")
     text = f"{result} {error_message}".lower()
+    # A run that executed no tests proves nothing.
+    if _NO_TESTS_RE.search(text):
+        return False
+    text = _ZERO_FAILURE_RE.sub(" ", text)
     return not any(token in text for token in ("failed", "failure", "error", "traceback"))
 
 
@@ -192,7 +238,14 @@ def _same_or_related(path: str, target: str) -> bool:
     b = target.casefold().rstrip("/")
     if a == b:
         return True
-    return a.endswith("/" + b) or b.endswith("/" + a)
+    # Suffix matches are only trusted when the longer path is absolute (e.g. a
+    # sandbox prefix). A relative decoy such as "evil/app/calc.py" must not
+    # count as work on "app/calc.py".
+    if a.endswith("/" + b):
+        return a.startswith("/")
+    if b.endswith("/" + a):
+        return b.startswith("/")
+    return False
 
 
 def _looks_like_scratch(path: str) -> bool:
