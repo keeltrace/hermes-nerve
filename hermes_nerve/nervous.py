@@ -1386,7 +1386,13 @@ class NervousSystem:
                 "requested_paths": list(state.requested_paths),
                 "changed_paths": changed_paths,
                 "reason": reason,
+                "shadow": self._config.mode == "shadow",
             })
+            if self._config.mode == "shadow":
+                # Shadow mode observes only: record the would-be block, never steer the turn.
+                with self._lock:
+                    self._metrics["progress_completion_block_shadowed"] += 1
+                return None
             return {
                 "action": "continue",
                 "message": (
