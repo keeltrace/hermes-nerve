@@ -58,6 +58,7 @@ config_schema:
   nervous_enabled: {type: bool, default: true}
   nervous_turn_admission: {type: bool, default: true}
   nervous_mode: {type: str, default: "correct_next"}
+  nervous_admission_risk_floor: {type: bool, default: true}
   nervous_challenge_confidence: {type: float, default: 0.86}
   nervous_call_threshold: {type: float, default: 0.58}
   nervous_max_provider_calls_per_turn: {type: int, default: 96}

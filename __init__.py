@@ -114,6 +114,7 @@ def _register_legacy(ctx):
         retain_recent_events=ctx.get_config("nervous_retain_recent_events", 64),
         emit_prompt_hint=ctx.get_config("nervous_emit_prompt_hint", False),
         local_learning=ctx.get_config("nervous_local_learning", True),
+        admission_risk_floor=ctx.get_config("nervous_admission_risk_floor", True),
         local_learning_min_samples=ctx.get_config("nervous_local_learning_min_samples", 8),
         repeated_failure_local_replan_at=ctx.get_config("nervous_repeated_failure_local_replan_at", 3),
     )
@@ -367,6 +368,7 @@ def _register_profile(ctx):
         emit_prompt_hint=get("nervous_emit_prompt_hint",False),
         local_learning=policy.enabled("local_learning") and bool(get("nervous_local_learning",True)),
         local_learning_min_samples=get("nervous_local_learning_min_samples",8),
+        admission_risk_floor=bool(get("nervous_admission_risk_floor",True)),
         repeated_failure_local_replan_at=get("nervous_repeated_failure_local_replan_at",3),
     )
     context.configure(
