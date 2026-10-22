@@ -5,7 +5,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hermes_nerve import nervous
-from tests.test_nervous import ScriptedEngine
+try:
+    from tests.test_nervous import ScriptedEngine
+except ModuleNotFoundError:  # `unittest discover -s tests` imports top-level module names
+    from test_nervous import ScriptedEngine
 
 
 class ShadowCompletionGateTests(unittest.TestCase):
