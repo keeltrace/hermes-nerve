@@ -26,6 +26,17 @@ def _resolve_secret(name:str)->str:
  except ImportError: return os.getenv(name,"").strip()
  return str(get_secret(name,"") or "").strip()
 
+def _default_provider()->str:
+ """Pick the transport when none is configured: OpenRouter unless only a TypeSafe key exists."""
+ try:
+  has_or=bool(_resolve_secret("OPENROUTER_API_KEY")); has_ts=bool(_resolve_secret("TYPESAFE_API_KEY"))
+ except Exception: return "openrouter"
+ return "typesafe" if has_ts and not has_or else "openrouter"
+def _credit_hint(code:int)->str:
+ if int(code)!=402: return ""
+ try: has_ts=bool(_resolve_secret("TYPESAFE_API_KEY"))
+ except Exception: has_ts=False
+ return " (hint: TYPESAFE_API_KEY is set; to bill TypeSafe directly set plugin setting jev_provider: typesafe)" if has_ts else ""
 def configure(*,provider:Any=None,base_url:Any=None,model:Any=None,typesafe_model:Any=None,opencode_model:Any=None,timeout:Any=None)->None:
  global _configured_provider,_configured_base_url,_configured_model,_configured_typesafe_model,_configured_opencode_model,_configured_timeout
  p=str(provider or "").strip().lower(); _configured_provider=p if p in SUPPORTED_PROVIDERS else None
@@ -41,7 +52,7 @@ class JevResponse:
  model:str; answers:dict[str,dict[str,Any]]; usage:dict[str,Any]; latency_ms:float; request_id:str=""; provider:str=""; transport:str="openrouter-decisions"; live_provider_call:bool=True
 class JevClient:
  def __init__(self,*,provider:str|None=None,api_key:str|None=None,base_url:str|None=None,model:str|None=None,timeout:float|None=None,transport:Callable|None=None)->None:
-  selected=str(provider or _configured_provider or os.getenv("HERMES_NERVE_PROVIDER") or "openrouter").strip().lower()
+  selected=str(provider or _configured_provider or os.getenv("HERMES_NERVE_PROVIDER") or ("openrouter" if api_key else _default_provider())).strip().lower()
   if selected not in SUPPORTED_PROVIDERS: raise JevError("jev provider must be 'openrouter', 'typesafe', or 'opencode'")
   self.provider_kind=selected
   if selected=="opencode":
@@ -63,7 +74,7 @@ class JevClient:
   try:
    with urllib.request.urlopen(request,timeout=timeout) as response: return int(response.status),response.read(),{str(k).lower():str(v) for k,v in response.headers.items()}
   except urllib.error.HTTPError as exc:
-   detail=exc.read().decode("utf-8","replace")[:500]; raise JevError(f"Jev API returned HTTP {exc.code}: {detail}") from exc
+   detail=exc.read().decode("utf-8","replace")[:500]; raise JevError(f"Jev API returned HTTP {exc.code}: {detail}"+(_credit_hint(exc.code) if self.provider_kind=="openrouter" else "")) from exc
   except (urllib.error.URLError,TimeoutError) as exc: raise JevError(f"Jev API connection failed: {exc}") from exc
  def system_one(self,*,state:Any,questions:dict[str,dict[str,Any]],model:str|None=None)->JevResponse:
   if not questions: raise JevError("At least one question is required")
@@ -72,7 +83,7 @@ class JevClient:
   started=time.monotonic(); raw_result=self._transport(self.base_url+self.path,headers,body,self.timeout); latency_ms=(time.monotonic()-started)*1000
   if not isinstance(raw_result,tuple) or len(raw_result) not in {2,3}: raise JevError("Jev transport returned an invalid response tuple")
   status,raw=raw_result[0],raw_result[1]; response_headers=raw_result[2] if len(raw_result)==3 and isinstance(raw_result[2],dict) else {}; response_headers={str(k).lower():str(v) for k,v in response_headers.items()}
-  if int(status)<200 or int(status)>=300: raise JevError(f"Jev API returned HTTP {status}: {bytes(raw).decode('utf-8','replace')[:500]}")
+  if int(status)<200 or int(status)>=300: raise JevError(f"Jev API returned HTTP {status}: {bytes(raw).decode('utf-8','replace')[:500]}"+(_credit_hint(status) if self.provider_kind=="openrouter" else ""))
   try: data=json.loads(raw)
   except json.JSONDecodeError as exc: raise JevError("Jev API returned invalid JSON") from exc
   answers=data.get("answers")

@@ -71,7 +71,7 @@ def _register_legacy(ctx):
     headless_worker = is_kanban_worker and bool(ctx.get_config("work_headless_workers", True))
     legacy_model = ctx.get_config("model_id", "typesafe/jev-1.13")
     client.configure(
-        provider=ctx.get_config("jev_provider", "openrouter"),
+        provider=ctx.get_config("jev_provider", None),
         model=ctx.get_config("jev_model", legacy_model),
         typesafe_model=ctx.get_config("typesafe_model", "jev-latest"),
         opencode_model=ctx.get_config("opencode_model", "jev-1.13"),
@@ -319,7 +319,7 @@ def _register_profile(ctx):
     if provider_needed:
         legacy_model=get("model_id","typesafe/jev-1.13")
         client.configure(
-            provider=get("jev_provider","openrouter"),
+            provider=get("jev_provider",None),
             model=get("jev_model",legacy_model),
             typesafe_model=get("typesafe_model","jev-latest"),
             opencode_model=get("opencode_model","jev-1.13"),

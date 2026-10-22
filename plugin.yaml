@@ -32,7 +32,7 @@ config_schema:
   assistant_prompt_max_chars: {type: int, default: 4000}
   assistant_provider_max_chars: {type: int, default: 6000}
   model_id: {type: str, default: "typesafe/jev-1.13", description: "Legacy model alias used only as the fallback for jev_model."}
-  jev_provider: {type: str, default: "openrouter"}
+  jev_provider: {type: str, default: ""}
   jev_model: {type: str, default: "typesafe/jev-1.13"}
   typesafe_model: {type: str, default: "jev-latest"}
   opencode_model: {type: str, default: "jev-1.13"}
