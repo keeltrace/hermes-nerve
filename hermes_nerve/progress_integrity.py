@@ -81,9 +81,23 @@ _ENV_ASSIGN_RE = re.compile(r"^(?:env\s+)?(?:[a-z_][a-z0-9_]*=\S*\s+)+")
 _PYTHON_PATH_RE = re.compile(r"^\S*/(?:bin/)?(python3?(?:\.\d+)?|pytest|py\.test)(?=\s|$)")
 
 
+_LAUNCHER_RE = re.compile(
+    r"^(?:"
+    r"uv\s+run(?:\s+(?:-[a-zA-Z]+|--[a-z-]+(?:[= ]\S+)?))*"
+    r"|uvx(?:\s+(?:-[a-zA-Z]+|--[a-z-]+(?:[= ]\S+)?))*"
+    r"|(?:poetry|pipenv|pdm|hatch|rye)\s+run"
+    r"|conda\s+run(?:\s+(?:-n|--name|-p|--prefix)\s+\S+)*"
+    r")\s+"
+)
+
+
 def _strip_command_prefix(segment: str) -> str:
     """Drop leading VAR=value assignments and venv paths so `X=1 .venv/bin/python -m pytest` reads as a test."""
     segment = _ENV_ASSIGN_RE.sub("", segment)
+    # Launchers such as `uv run --with pytest`, `uvx`, `poetry run`, `pipenv run`,
+    # `pdm run`, `hatch run` and `conda run -n env` only choose the environment;
+    # the command that follows is what actually runs.
+    segment = _LAUNCHER_RE.sub("", segment)
     segment = _PYTHON_PATH_RE.sub(lambda m: m.group(1), segment)
     # Interpreter flags such as -B/-u/-I before "-m pytest" do not change what runs.
     return re.sub(r"^(python3?(?:\.\d+)?)((?:\s+-[a-ln-z]+)+)(?=\s+-m\s)", r"\1", segment)
