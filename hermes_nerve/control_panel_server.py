@@ -12,12 +12,9 @@ from .control_panel import ControlPanel, PanelError
 
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
-    "/learn": ("learn.html", "text/html; charset=utf-8"),
     "/guide": ("guide.html", "text/html; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/assets/styles.css": ("styles.css", "text/css; charset=utf-8"),
-    "/assets/learn.js": ("learn.js", "text/javascript; charset=utf-8"),
-    "/assets/learn.css": ("learn.css", "text/css; charset=utf-8"),
 }
 MAX_BODY = 65536
 
@@ -90,26 +87,6 @@ def make_handler(panel: ControlPanel, session_token: str):
                     self.wfile.write(payload)
                     return
                 self._authorization()
-                if path == "/api/university/manifest":
-                    from . import university
-                    return self._reply(200, university.load_manifest())
-                if path == "/api/university/module":
-                    q = parse_qs(urlsplit(self.path).query)
-                    from . import university
-                    return self._reply(200, university.load_module(q.get("id", ["1"])[0]))
-                if path == "/api/university/status":
-                    q = parse_qs(urlsplit(self.path).query)
-                    from . import university
-                    profile = q.get("profile", [""])[0][:64]
-                    data = university.load_progress(profile)
-                    modules = {mid: {**m, "complete": university.module_complete(profile, mid)}
-                               for mid, m in data.get("modules", {}).items()}
-                    return self._reply(200, {"modules": modules,
-                                             "capstone": data.get("capstone") or {}})
-                if path == "/api/university/export":
-                    q = parse_qs(urlsplit(self.path).query)
-                    from . import university
-                    return self._reply(200, university.export_progress(q.get("profile", [""])[0][:64]))
                 if path == "/api/status":
                     return self._reply(200, panel.status())
                 if path == "/api/local-setup-status":
@@ -156,52 +133,6 @@ def make_handler(panel: ControlPanel, session_token: str):
                     return self._reply(200, panel.install_preview())
                 if route == "/api/install":
                     return self._reply(200, panel.install(payload))
-                if route == "/api/university/lesson":
-                    from . import university
-                    profile = str(payload.get("profile", ""))[:64]
-                    module_id = str(payload.get("module", ""))[:8]
-                    lesson = str(payload.get("lesson", ""))[:200]
-                    try:
-                        university.record_lesson(profile, module_id, lesson)
-                    except KeyError:
-                        raise PanelError("Unknown module.", 404)
-                    return self._reply(200, {"ok": True})
-                if route == "/api/university/check":
-                    from . import university
-                    profile = str(payload.get("profile", ""))[:64]
-                    module_id = str(payload.get("module", ""))[:8]
-                    answer = str(payload.get("answer", ""))[:4000]
-                    try:
-                        ok, question, missed = university.grade_check_details(profile, module_id, answer)
-                    except KeyError:
-                        raise PanelError("Unknown module.", 404)
-                    return self._reply(200, {"passed": ok, "question": question, "missed": missed})
-                if route == "/api/university/lab":
-                    from . import university
-                    profile = str(payload.get("profile", ""))[:64]
-                    module_id = str(payload.get("module", ""))[:8]
-                    submission = payload.get("submission")
-                    if submission is not None and not isinstance(submission, dict):
-                        raise PanelError("submission must be an object.", 400)
-                    try:
-                        evidence = university.run_lab(module_id, profile, submission)
-                    except KeyError:
-                        raise PanelError("Unknown module.", 404)
-                    return self._reply(200, evidence)
-                if route == "/api/university/capstone/fixture":
-                    from . import university
-                    fixture = university.capstone_fixture()
-                    return self._reply(200, {"fixture": str(fixture)})
-                if route == "/api/university/capstone/verify":
-                    from . import university
-                    raw = str(payload.get("fixture", ""))
-                    if not raw or len(raw) > 4096:
-                        raise PanelError("fixture path required.", 400)
-                    return self._reply(200, university.capstone_verify(Path(raw)))
-                if route == "/api/university/reset":
-                    from . import university
-                    profile = str(payload.get("profile", ""))[:64]
-                    return self._reply(200, university.reset_progress(profile))
                 raise PanelError("Unknown route.", 404)
             except PanelError as exc:
                 self._reply(exc.status, {"error": str(exc)})

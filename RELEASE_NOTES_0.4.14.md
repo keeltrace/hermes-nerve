@@ -1,9 +1,14 @@
-# Nerve 0.4.14 — sanitized release
+# Nerve 0.4.14 — streamlined release candidate
 
-0.4.14 = 0.4.13 + release sanitization; no behavior change.
+PR #75 retains profile/config repair, sidecar authority, Selective Context,
+Verified Experience, Shared Context, Action Gate and core diagnostics.
+Experimental dashboards, training UI and the optional companion plugin are
+deferred; the original tree is preserved on
+`backup/pr75-before-feature-slim-8ce05ed`.
 
-- Observatory roots derive from HERMES_HOME/user home (no hardcoded absolute paths)
-- Internal planning material and stale source snapshots excluded from the public tree
-- See CHANGELOG.md for 0.4.12/0.4.13 (sidecar authority, save-path repairs, CLI/panel parity)
-- Security disclosure: see RELEASE_NOTES_0.4.13.md (stock scanner flags 3 deliberate gated capabilities; --force documented)
-- Quality gates: 1,339 passed / 0 failed / 6 skipped; release verifier PASS; secrets sweep clean
+- Internal planning material and stale source snapshots remain excluded.
+- Contributor credit and the external-PR integration ledger are preserved.
+- See CHANGELOG.md for the retained profile, CLI and control-panel changes.
+- Qualification belongs to the exact candidate SHA in PR #75 CI; historical
+  full-feature test counts do not describe this reduced release tree.
+- This cleanup does not deploy, restart Hermes, merge the PR or publish a release.

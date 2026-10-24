@@ -239,12 +239,6 @@ def main(argv=None):
     setup.add_argument("--replace-shared-context", action="store_true")
     setup.add_argument("--assistant-install", action="store_true")
     setup.add_argument("--assistant-disable", action="store_true")
-    uni = sub.add_parser("university", help="Operator University: local operator training.")
-    uni.add_argument("action", choices=("list", "status", "show", "check", "capstone"))
-    uni.add_argument("--profile", default="")
-    uni.add_argument("--module", default="1")
-    uni.add_argument("--answer", default="")
-    uni.add_argument("verify", nargs="?", default="")
     exp = sub.add_parser("experience", help="Inspect verified local Nerve experience.")
     exp.add_argument("action", choices=("status", "search", "explain", "reconcile", "summary", "graph"))
     exp.add_argument("--query", default="")
@@ -285,42 +279,6 @@ def main(argv=None):
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
-    if args.command == "university":
-        import tempfile
-        from . import university
-        action = args.action
-        if action == "list":
-            for m in university.load_manifest()["modules"]:
-                print(f"{m['id']}. {m['title']}")
-            return 0
-        if action == "status":
-            data = university.load_progress(args.profile or "")
-            done = [mid for mid, m in data.get("modules", {}).items() if university.module_complete(args.profile or "", mid)]
-            print(f"completed modules: {', '.join(done) if done else 'none'}")
-            print("capstone:", "passed" if data.get("capstone", {}).get("passed") else "not verified")
-            return 0
-        if action == "show":
-            mod = university.load_module(args.module or "1")
-            for l in mod["lessons"]:
-                print(f"== {l['title']} ==\n{l['body']}\n")
-            print("== Lab ==")
-            print(f"Goal: {mod['lab']['goal']}")
-            print("\n".join(mod["lab"]["steps"]))
-            print("Check:", mod["check"]["question"])
-            return 0
-        if action == "check":
-            ok, q = university.grade_check(args.profile or "", args.module or "1", args.answer or "")
-            print("PASS" if ok else "FAIL - review the lesson and try again")
-            return 0 if ok else 1
-        if action == "capstone":
-            if args.verify == "verify":
-                evidence = university.capstone_verify(Path(args.module or tempfile.mkdtemp(prefix="uni-capstone-")))
-                print(json.dumps(evidence, indent=1))
-                return 0 if evidence["passed"] else 1
-            fixture = university.capstone_fixture(Path(tempfile.mkdtemp(prefix="uni-capstone-")))
-            print("capstone fixture:", fixture)
-            print("complete the deliverable in org/deliverable, then re-run with: university capstone verify", fixture)
-            return 0
     if args.command != "setup":
         parser.print_help(); return 2
     if args.profile and args.reset:

@@ -70,8 +70,7 @@ class TestPanelStagedAdmission(unittest.TestCase):
     def test_gui_assets_and_modules_are_preserved_exactly(self):
         package = self.source / 'hermes_nerve'
         assets = ('web/guide.html', 'web/styles.css', 'web/app.js',
-                  'university/content/lesson.json', 'observatory/assets/app.js',
-                  'observatory/assets/theme.css', 'research/safety.md', 'nested/module.py')
+                  'policy/safety.txt', 'research/safety.md', 'nested/module.py')
         expected = {'__init__.py': b'# synthetic package\n', 'cli.py': b'# synthetic CLI\n'}
         for name in assets:
             source = package / name

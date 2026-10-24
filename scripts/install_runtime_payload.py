@@ -11,8 +11,6 @@ PACKAGES = ("hermes_nerve", "hermes_jev")
 # Keep in sync with tool.setuptools.package-data in pyproject.toml.
 ASSET_GLOBS = (
     "hermes_nerve/web/*.html", "hermes_nerve/web/*.css", "hermes_nerve/web/*.js",
-    "hermes_nerve/university/content/*.json",
-    "hermes_nerve/observatory/assets/*.css", "hermes_nerve/observatory/assets/*.js",
     "hermes_nerve/research/*.md",
     "hermes_nerve/policy/*.txt",
 )

@@ -44,8 +44,8 @@ class RuntimeIdentityTests(unittest.TestCase):
         self.assertEqual(project["project"]["dynamic"], ["version"])
         self.assertEqual(project["tool"]["setuptools"]["dynamic"]["version"]["attr"], "hermes_nerve._version.__version__")
         package_data = project["tool"]["setuptools"]["package-data"]["hermes_nerve"]
-        self.assertIn("observatory/assets/*.css", package_data)
-        self.assertIn("observatory/assets/*.js", package_data)
+        for pattern in ("web/*.html", "web/*.css", "web/*.js", "policy/*.txt"):
+            self.assertIn(pattern, package_data)
         self.assertIn("research/*.md", package_data)
 
     def test_identity_finds_wheel_data_manifest(self):

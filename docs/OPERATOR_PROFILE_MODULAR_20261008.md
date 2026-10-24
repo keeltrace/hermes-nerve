@@ -36,4 +36,4 @@ Do not use `plugins.entries.hermes-nerve`: Hermes ignores that namespace.
 - A missing profile sidecar and missing explicit profile still use Legacy until the operator elects a profile.
 - The named profiles retain their existing 0.3.2.2 feature defaults, unless the operator explicitly toggles modules.
 - Worker headless registration, dependencies, and remote-host conditional behavior remain unchanged.
-- This development change does not install into live Hermes. Observatory and new A/B harness worktrees still require separate feature integration and testing.
+- This development change does not install into live Hermes. New A/B harness worktrees still require separate feature integration and testing.

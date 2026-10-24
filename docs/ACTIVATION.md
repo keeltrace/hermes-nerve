@@ -34,8 +34,8 @@ installed plugin, `config.yaml`, and `profile.json` stay byte-identical.
 3. Verify the loaded version reports 0.4.0 and Nerve hooks register
    (gate events carry v0.4-only vocabulary the old install never writes).
 4. Exercise: one routine action (no prompt), one consequential action
-   (explained approval appears; deny is respected), `nerve university list`,
-   `nerve ui` → Learn page, ContextBus health.
+   (explained approval appears; deny is respected), `nerve ui` setup and
+   diagnostics, ContextBus health.
 5. Rollback: delete `/tmp/nerve-canary` — the live installation was never touched.
 
 ## Phase 2 — Durable single-home canary
@@ -50,7 +50,7 @@ installed plugin, `config.yaml`, and `profile.json` stay byte-identical.
    (e.g. `plugin_rule:nerve:low-confidence`) from `config.yaml` after backing it
    up; leave every unrelated entry intact.
 5. Restart the session/gateway for that home only; verify loaded 0.4.0,
-   effective profile unchanged, UI + University + ContextBus health checks pass.
+   effective profile unchanged, UI + ContextBus health checks pass.
 6. Rollback: stop the session, restore the backup tarball and backed-up
    `config.yaml`, restart, verify the pre-state hashes.
 
@@ -71,7 +71,7 @@ installed plugin, `config.yaml`, and `profile.json` stay byte-identical.
 - Loaded version == 0.4.0 on every reachable target (not merely copied files).
 - Routine work flows without needless prompts; consequential work gets useful,
   effect-scoped approvals; denial is respected.
-- University 9 modules + capstone verifier functional; ContextBus A→B exchange
+- ContextBus A→B exchange
   works with C denied; bus-down fallback safe.
 - Jev responses report a pinned 1.14 model id on the configured transport.
 - Zero GitHub publication, zero Paperclip coupling, zero unapproved downloads.

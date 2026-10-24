@@ -25,8 +25,6 @@ RUNTIME_ROOT_FILES = ("plugin.yaml", "__init__.py", "CONTRIBUTORS.md", "CHANGELO
 # without them must never pass admission.
 RUNTIME_ASSET_PATTERNS = (
     "web/*.html", "web/*.css", "web/*.js",
-    "university/content/*.json",
-    "observatory/assets/*.css", "observatory/assets/*.js",
     "research/*.md",
     "policy/*.txt",
 )

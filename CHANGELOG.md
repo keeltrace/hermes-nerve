@@ -20,11 +20,9 @@
 
 ## 0.4.14 — release sanitization
 
-- Observatory roots (`fleet_monitor`, `server`, `session_index`) now derive
-  from `HERMES_HOME`/user home instead of hardcoded absolute paths.
 - Internal planning material and the stale native-source snapshot excluded
-  from the public tree. No behavior change; fleet deployments remain on
-  0.4.13 (byte-identical runtime behavior).
+  from the public tree. The PR release scope excludes deferred experimental
+  dashboards and training tools; their original source is preserved separately.
 
 ## 0.4.13 — sidecar authority, save-path, CLI/panel parity
 
@@ -184,10 +182,6 @@ This is a **local candidate**, not a publication or live installation.
 
 ## 0.4.0 — Internal Release
 
-- Added complete Operator University integration:
-  * Student-facing interactive web UI at `/learn` (hermes_nerve/web/learn.html)
-  * Command-line `nerve university` with list/status/show/check/capstone subcommands
-  * Real-time progress tracking, disposable-lab fixtures, and capstone verification in the Control Panel UI
 - Implemented HermesContextBus acceptance demo (N-33) as `hermes_nerve.integrations.contextbus_demo`, proving two-profile publishing/receiving, unauthorized profile rejection, and adapter fallback when bus is unavailable.
 - Added regression tests for the five HITL v2.2 security defects:
   * Path-qualified executable guard
@@ -202,8 +196,8 @@ This is a **local candidate**, not a publication or live installation.
   * Generated RELEASE_MANIFEST (SHA‑256 checksums of plugin.yaml, hermes_nerve/ and docs/ artifacts)
   * Produced a local ZIP distribution `nerve‑v0.4.0.zip` with hermes_nerve/, docs/ and plugin.yaml
 - Produced release verification evidence:
-  * `docs/evidence/...` collection (re‑produced from HITL v2.4 snapshot and new university/capstone evidence)
-  * Final completion‑integrity verifier `scripts/verify_completion.sh` (updated with new checks and university/capstone validation)
+  * `docs/evidence/...` collection (historical HITL v2.4 snapshot)
+  * Final completion‑integrity verifier `scripts/verify_completion.sh` (historical completion checks)
   * Real‑Hermes‑session plugin override test (`HERMES_ENABLE_PROJECT_PLUGINS=1`) to confirm v0.4.0 loads and preserves the live installation
 - Documented activation and rollback procedure (docs/ACTIVATION.md) for a single‑session, controlled Nerve v0.4.0 rollout.
 

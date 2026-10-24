@@ -802,8 +802,6 @@ function pollLocalSetup(backend) {
 }
 async function start() {
   state.token = getToken();
-  const learnLink = document.querySelector('a.rail-link[href="/learn"]');
-  if (learnLink) { learnLink.href = state.token ? "/learn#token=" + state.token : "/learn"; }
   if (!state.token) {
     $("content").innerHTML = '<h1>Session link missing.</h1><p class="lead">Open the local URL printed by the Nerve command. Each launch uses a new authorization token.</p>';
     $("action-bar").hidden = true;

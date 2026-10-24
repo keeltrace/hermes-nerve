@@ -37,9 +37,6 @@ def _mk_selective_source(t, source):
         "hermes_nerve/web/index.html": "<p>x</p>",
         "hermes_nerve/web/app.js": "// x",
         "hermes_nerve/web/app.css": "/*x*/",
-        "hermes_nerve/university/content/sample.json": "{}",
-        "hermes_nerve/observatory/assets/factory.js": "// x",
-        "hermes_nerve/observatory/assets/factory.css": "/*x*/",
         "hermes_nerve/research/note.md": "x",
     }.items():
         p = source / rel

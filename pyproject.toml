@@ -25,7 +25,7 @@ include = ["hermes_nerve*", "hermes_jev*"]
 exclude = ["tests*", "review*", "planning*", "contracts*", "packaging*"]
 
 [tool.setuptools.package-data]
-hermes_nerve = ["web/*.html", "web/*.css", "web/*.js", "university/content/*.json", "observatory/assets/*.css", "observatory/assets/*.js", "research/*.md", "policy/*.txt"]
+hermes_nerve = ["web/*.html", "web/*.css", "web/*.js", "research/*.md", "policy/*.txt"]
 
 [tool.setuptools.data-files]
 "share/hermes-nerve" = ["plugin.yaml", "__init__.py", "CONTRIBUTORS.md", "CHANGELOG.md"]
