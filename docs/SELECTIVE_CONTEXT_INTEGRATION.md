@@ -162,7 +162,12 @@ requirements. The original serving gateway is not modified by this source fix.
 The inherited CI scanner-exception wrapper was removed, not repaired or expanded.
 CI now runs unmodified native validation against pinned official Hermes commit
 `1c0cd667746d3395fe9e1b6c74f8f85952486f18`, plus the native request integration
-suite. The locally exercised `plugin_guard.py`, `plugin_guard_context.py` and
+suite. Its runtime job uses Python 3.14: the official pinned Hermes metadata
+allows 3.11 for updater bootstrapping but gates runtime dependencies on >=3.14.
+The first native CI attempt on 3.11 failed before validation with missing
+`ruamel.yaml`; correcting the runtime job leaves the full Nerve 3.10–3.14
+compatibility matrix intact. The locally exercised `plugin_guard.py`,
+`plugin_guard_context.py` and
 `skills_guard.py` were SHA-256 compared to that exact official revision: all
 three matched byte-for-byte. Native validation passed with **caution**, not a
 DANGEROUS override, and native doctor passed. No Hermes core source was edited.
