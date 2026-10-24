@@ -168,8 +168,17 @@ def test_home_deletion_is_blocked_as_prohibited():
     assert "home" in result["message"]
 
 
+# Deliberately dangerous command literals, quoted ONLY so the tests can
+# assert the engine BLOCKS them. Denial-test data — never executed here.
+_BLOCKED_COMMAND_CASES = {
+    "root_recursive": "rm -rf / --no-preserve-root",
+    "sudo_wrapped": "sudo rm -rf /usr/share/data",
+    "etc_recursive": "rm -rf /etc",
+}
+
+
 def test_root_deletion_blocked():
-    result = call("rm -rf / --no-preserve-root")
+    result = call(_BLOCKED_COMMAND_CASES["root_recursive"])
     assert result is not None and result["action"] == "block"
 
 
@@ -194,7 +203,7 @@ def test_sudo_install_requires_approval():
 
 
 def test_sudo_wrapped_destruction_is_blocked():
-    result = call("sudo rm -rf /usr/share/data")
+    result = call(_BLOCKED_COMMAND_CASES["sudo_wrapped"])
     assert result is not None and result["action"] == "block"
     assert "root" in result["message"]
 
@@ -579,7 +588,7 @@ def test_advisory_mode_never_interrupts():
     gate.configure(mode="advisory", min_confidence=0.80, min_allow_probability=0.90, scope="selective")
     mount(FakeEngine(value="APPROVAL", probabilities={"APPROVAL": 0.9}))
     assert call("git push origin x") is None
-    assert call("rm -rf /etc") is None
+    assert call(_BLOCKED_COMMAND_CASES["etc_recursive"]) is None
 
 
 def test_bypass_prefilter_still_applies():

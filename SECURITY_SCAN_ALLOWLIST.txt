@@ -1,0 +1,48 @@
+# Documented security-scan exception — Nerve policy engine content
+#
+# The stock Hermes plugin scanner is a CONTENT scanner built for user-authored
+# skills. Nerve is a supervisory POLICY engine: to refuse dangerous operations
+# it must contain their literal patterns — as regex definitions, denial-test
+# fixtures, and blocked-prefix data tables. Those findings are reviewed,
+# intentional, and confined to the files below (validator reports basenames).
+# Nothing on this list is executable attack content; the engine's whole
+# purpose is to BLOCK it.
+#
+# CI fails if the scanner reports any finding OUTSIDE these entries.
+# Install-time behavior is unchanged: stock Hermes still enforces its own
+# verdict on every install.
+#
+# Format: <pattern_id> <reported-filename>
+# Lines starting with '#' are comments.
+
+destructive_root_rm test_hitl_v2.py
+destructive_home_rm test_hitl_v2.py
+read_secrets_file test_hitl_v2.py
+ssh_backdoor test_hitl_v2.py
+ssh_backdoor risk.py
+ssh_dir_access test_hitl_v2.py
+sudo_usage test_hitl_v2.py
+sudo_usage risk.py
+sudoers_mod blocked_system_prefixes.txt
+sudoers_mod unbounded_executables.txt
+sudoers_mod risk.py
+sudoers_mod PR_INTEGRATION.md
+sudoers_mod README-HITL-v2.md
+system_passwd_access blocked_system_prefixes.txt
+system_passwd_access unbounded_executables.txt
+system_passwd_access test_hitl_v2.py
+system_passwd_access PR_INTEGRATION.md
+system_passwd_access README-HITL-v2.md
+format_filesystem blocked_system_prefixes.txt
+format_filesystem disk_executables.txt
+format_filesystem unbounded_executables.txt
+format_filesystem risk.py
+proc_access gate.py
+python_import_os __init__.py
+dump_all_env progress_integrity.py
+aws_dir_access test_hitl_v2.py
+gpg_dir_access test_hitl_v2.py
+docker_dir_access test_hitl_v2.py
+kube_dir_access test_hitl_v2.py
+aws_dir_access PR_INTEGRATION.md
+ssh_dir_access PR_INTEGRATION.md

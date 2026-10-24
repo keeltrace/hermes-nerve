@@ -173,7 +173,7 @@ class ProgressIntegrityQolTests(unittest.TestCase):
                  (0, 'Ran 0 tests\nOK', False),
                  (0, '1 failed in 0.01s', False))
         for exit_code, output, verified in cases:
-            with self.subTest(exit_code=exit_code, output=output), tempfile.TemporaryDirectory() as td:
+            with self.subTest(exit_code=exit_code, output=output), tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
                 # events live outside the workspace td: a late async flush must never
                 # race the workspace TemporaryDirectory cleanup (CI 3.12 Errno 39)
                 with tempfile.TemporaryDirectory() as events_td, patch.dict(os.environ, {
