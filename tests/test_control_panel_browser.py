@@ -172,47 +172,65 @@ class BrowserHarness:
         self.url = f"http://127.0.0.1:{self.server.server_port}/#token={self.token}"
         self.thread = Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        self.debug_port = _free_port()
+        self.debug_port = 0  # Chrome owns allocation; no allocate/close/rebind race.
         self.profile_dir = Path(self.tmp.name) / "chrome-profile"
         self.chrome = None
+        self.chrome_log = None
 
-    def start_chrome(self):
+    def start_chrome(self, timeout=25):
+        log_path = Path(self.tmp.name) / "chrome.log"
+        self.chrome_log = log_path.open("w")
+        chrome = CHROME
+        if not chrome:
+            raise RuntimeError("Chrome executable is unavailable")
         self.chrome = subprocess.Popen(
-            [CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
-             "--disable-dev-shm-usage", f"--remote-debugging-port={self.debug_port}",
+            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
+             "--disable-dev-shm-usage", "--remote-debugging-port=0",
              f"--user-data-dir={self.profile_dir}", "about:blank"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        deadline = time.time() + 25
-        while time.time() < deadline:
+            # An undrained PIPE can fill before DevTools starts. A file cannot
+            # backpressure Chrome and preserves diagnostics even after a crash.
+            stdout=self.chrome_log, stderr=self.chrome_log,
+            start_new_session=os.name == "posix")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.chrome.poll() is not None:
+                break
             try:
+                self.debug_port = int((self.profile_dir / "DevToolsActivePort").read_text().splitlines()[0])
                 targets = json.loads(_urlopen_no_proxy(
                     f"http://127.0.0.1:{self.debug_port}/json/list", timeout=2))
                 for target in targets:
                     if target.get("type") == "page":
                         return target["webSocketDebuggerUrl"]
-            except Exception:
-                time.sleep(0.3)
-        # Surface Chrome's own diagnostics instead of discarding them, so a
-        # DevTools startup failure on a runner is diagnosable from CI logs.
-        tail = ""
-        try:
-            self.chrome.terminate()
-            out, err = self.chrome.communicate(timeout=5)
-            tail = ((err or "") + (out or "")).strip()[-2000:]
-        except Exception:
-            pass
-        raise RuntimeError(
-            "Chrome DevTools endpoint did not come up"
-            + (f"; chrome output:\n{tail}" if tail else ""))
+            except (OSError, ValueError, IndexError, KeyError):
+                pass
+            time.sleep(0.3)
+        tail = log_path.read_text(errors="replace").strip()[-2000:]
+        raise RuntimeError("Chrome DevTools endpoint did not come up"
+                           + (f"; chrome output:\n{tail}" if tail else ""))
 
     def stop(self):
         if self.chrome:
-            self.chrome.terminate()
             try:
+                self.chrome.terminate()
                 self.chrome.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self.chrome.kill()
+                self.chrome.wait(timeout=5)
+            finally:
+                # This is ONLY the new session/process group created above,
+                # never an existing user Chrome or production Hermes process.
+                if os.name == "posix":
+                    import signal
+                    try:
+                        os.killpg(self.chrome.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+        if self.chrome_log:
+            self.chrome_log.close()
         self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=3)
         self.tmp.cleanup()
 
 
@@ -223,12 +241,9 @@ class ControlPanelBrowserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.harness = BrowserHarness()
+        cls.addClassCleanup(cls.harness.stop)
         cls.devtools_ws = cls.harness.start_chrome()
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.harness.stop()
 
     def test_profile_views_states_and_reasons_in_real_browser(self):
         cdp = DevTools(self.devtools_ws)

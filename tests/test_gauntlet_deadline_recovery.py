@@ -24,6 +24,36 @@ def test_nested_deadline_restores_outer_start(monkeypatch):
         d._hook_deadline_start.reset(original)
 
 
+def _descendant_state(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        # Successful process-group cleanup can reap the child at any instant.
+        # Other errors must still fail this safety assertion, not imply death.
+        return None
+
+
+def test_descendant_state_exit_during_observation_is_dead():
+    from unittest.mock import patch
+    # Reproduce the exact exists()/read() race, not a timing-dependent rerun.
+    with patch.object(Path, "exists", return_value=True), patch.object(
+            Path, "read_text", side_effect=FileNotFoundError):
+        assert _descendant_state(999997) is None
+
+
+def test_descendant_state_keeps_live_and_permission_failures_visible():
+    from unittest.mock import patch
+    assert _descendant_state(os.getpid()) not in (None, "Z")
+    with patch.object(Path, "exists", return_value=True), patch.object(
+            Path, "read_text", side_effect=PermissionError):
+        try:
+            _descendant_state(999997)
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("Permission failure was mistaken for an exited child")
+
+
 def test_timeout_does_not_wait_for_descendant_stdout(tmp_path):
     command = "import subprocess,sys,time; child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(1.2)']); print(child.pid,flush=True); time.sleep(1.2)"
     start = time.monotonic()
@@ -32,14 +62,11 @@ def test_timeout_does_not_wait_for_descendant_stdout(tmp_path):
     assert time.monotonic() - start < 0.9
     child_pid = int(output.splitlines()[0])
     try:
-        def _descendant_state():
-            stat = Path(f"/proc/{child_pid}/stat")
-            return stat.read_text().rsplit(")", 1)[1].split()[0] if stat.exists() else None
         deadline = time.monotonic() + 2.0
-        state = _descendant_state()
+        state = _descendant_state(child_pid)
         while state not in (None, "Z") and time.monotonic() < deadline:
             time.sleep(0.05)
-            state = _descendant_state()
+            state = _descendant_state(child_pid)
         assert state in (None, "Z"), "Timed-out verification left an executing descendant"
     finally:
         try:
