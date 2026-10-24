@@ -58,6 +58,23 @@ class ProfileViewTests(unittest.TestCase):
             # Not current -> no claim about its primary set.
             self.assertEqual(views["legacy"]["primary_modules"], [])
 
+    def test_custom_view_shows_effective_modules_when_switching_from_other_profile(self):
+        """Regression (PR #75 review): browsing Full Configuration from a named
+        profile must expose the live module selection, not an empty primary
+        list that collapses the view to setup-only extras."""
+        with tempfile.TemporaryDirectory() as td:
+            panel = _panel(td)
+            from hermes_nerve.config_resolver import resolve_config
+            doc = {"version": 1, "nerve_profile": "operator", "nerve_modules": {}, "advanced": {}}
+            cfg = resolve_config(home=Path(td), profile=doc)
+            self.assertNotEqual(cfg.profile, "custom")
+            views = panel.profile_views(doc, cfg)
+            on_modules = sorted(k for k, on in cfg.modules.items() if on)
+            self.assertTrue(on_modules)
+            self.assertEqual(views["custom"]["primary_modules"], on_modules)
+            self.assertTrue(views["custom"]["primary_modules"])
+            self.assertFalse(views["custom"]["is_current_profile"])
+
     def test_available_with_setup_excludes_primary_and_setup_dependent(self):
         with tempfile.TemporaryDirectory() as td:
             views = _panel(td).status()["views"]
