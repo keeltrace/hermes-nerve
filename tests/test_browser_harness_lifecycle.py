@@ -38,6 +38,23 @@ server.serve_forever()
             endpoint = harness.start_chrome(timeout=2)
         self.assertEqual(endpoint, f"ws://127.0.0.1:{harness.debug_port}/devtools/page/fixture")
 
+    def test_invalid_desktop_bus_does_not_reach_browser(self):
+        harness = browser.BrowserHarness()
+        self.addCleanup(harness.stop)
+        executable = self.fake_executable(harness, """import os,sys
+from pathlib import Path
+profile = Path(next(arg.split('=',1)[1] for arg in sys.argv if arg.startswith('--user-data-dir=')))
+expected = 'unix:path=' + str(profile.parent / 'unavailable-dbus')
+isolated = all(os.environ.get(key) == expected for key in ('DBUS_SESSION_BUS_ADDRESS','DBUS_SYSTEM_BUS_ADDRESS'))
+print('fixture bus isolated' if isolated else 'desktop bus leaked', file=sys.stderr, flush=True)
+sys.exit(7)
+""")
+        inherited = {"DBUS_SESSION_BUS_ADDRESS": "invalid-fixture:",
+                     "DBUS_SYSTEM_BUS_ADDRESS": "invalid-fixture:"}
+        with patch.dict(os.environ, inherited), patch.object(browser, "CHROME", executable):
+            with self.assertRaisesRegex(RuntimeError, "fixture bus isolated"):
+                harness.start_chrome(timeout=1)
+
     def test_crashed_child_never_becomes_skip_or_success(self):
         harness = browser.BrowserHarness()
         self.addCleanup(harness.stop)

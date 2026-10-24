@@ -182,13 +182,20 @@ The blanket test-temp-directory error suppression and unused deadline fixture
 inherited from the PR were removed; tests must expose real cleanup failures.
 
 The CI fixture follow-up preserves the original safety assertions: descendant
-state reads catch only `FileNotFoundError` from an actually vanished process;
-live descendants and permission errors remain failures. Browser startup writes
+state reads catch only `FileNotFoundError` (ENOENT) or `ProcessLookupError`
+(ESRCH) from an actually vanished process; live descendants and permission
+errors remain failures. Browser startup writes
 to a fixture-owned log instead of undrained pipes, discovers Chrome's own
 `DevToolsActivePort`, and cleans up its own process group even on startup
 failure. A noisy synthetic child reproduced the old pipe deadlock before the
 repair; this is harness regression evidence, not a replacement for the required
 real-browser DOM test. The real Chrome startup deadline remains 25 seconds.
+The fixture child also receives valid-format, deliberately unavailable D-Bus
+addresses in its own temporary directory: malformed inherited addresses can
+stall startup, while a live new session was observed autoactivating desktop
+portals/keyrings and blocking real navigation. No host environment or service
+is changed, no dependency is installed, and no browser-security flag is added.
+The final fixture passed the existing real DOM macro, not just endpoint startup.
 
 Final local verification after integration:
 

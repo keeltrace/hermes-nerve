@@ -183,10 +183,18 @@ class BrowserHarness:
         chrome = CHROME
         if not chrome:
             raise RuntimeError("Chrome executable is unavailable")
+        command = [chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
+                   "--disable-dev-shm-usage", "--remote-debugging-port=0",
+                   f"--user-data-dir={self.profile_dir}", "about:blank"]
+        # The web fixture needs no desktop integration. A valid, unavailable
+        # address fails immediately; malformed inherited values trigger D-Bus
+        # discovery, and a live session can activate real portals/keyrings.
+        child_env = os.environ.copy()
+        unavailable_bus = "unix:path=" + str(Path(self.tmp.name) / "unavailable-dbus")
+        child_env.update(DBUS_SESSION_BUS_ADDRESS=unavailable_bus,
+                         DBUS_SYSTEM_BUS_ADDRESS=unavailable_bus)
         self.chrome = subprocess.Popen(
-            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
-             "--disable-dev-shm-usage", "--remote-debugging-port=0",
-             f"--user-data-dir={self.profile_dir}", "about:blank"],
+            command, env=child_env,
             # An undrained PIPE can fill before DevTools starts. A file cannot
             # backpressure Chrome and preserves diagnostics even after a crash.
             stdout=self.chrome_log, stderr=self.chrome_log,

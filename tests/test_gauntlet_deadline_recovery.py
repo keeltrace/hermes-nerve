@@ -27,18 +27,19 @@ def test_nested_deadline_restores_outer_start(monkeypatch):
 def _descendant_state(pid):
     try:
         return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except FileNotFoundError:
-        # Successful process-group cleanup can reap the child at any instant.
-        # Other errors must still fail this safety assertion, not imply death.
+    except (FileNotFoundError, ProcessLookupError):
+        # Reaping can remove the path (ENOENT) or invalidate an opened /proc
+        # reader (ESRCH). Other errors must fail this assertion, not imply death.
         return None
 
 
 def test_descendant_state_exit_during_observation_is_dead():
     from unittest.mock import patch
     # Reproduce the exact exists()/read() race, not a timing-dependent rerun.
-    with patch.object(Path, "exists", return_value=True), patch.object(
-            Path, "read_text", side_effect=FileNotFoundError):
-        assert _descendant_state(999997) is None
+    for vanished_error in (FileNotFoundError, ProcessLookupError):
+        with patch.object(Path, "exists", return_value=True), patch.object(
+                Path, "read_text", side_effect=vanished_error):
+            assert _descendant_state(999997) is None
 
 
 def test_descendant_state_keeps_live_and_permission_failures_visible():
