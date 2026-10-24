@@ -1,11 +1,9 @@
 name: release
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "pyproject.toml"
-      - ".github/workflows/release.yml"
+  # Publication is an explicit human action: a qualifying push to main must
+  # NEVER auto-create a public release. Run this workflow by hand only after
+  # the release candidate is approved for publication.
   workflow_dispatch:
     inputs:
       version:

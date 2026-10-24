@@ -317,6 +317,7 @@ def _register_legacy(ctx):
         ("nerve_assess", schemas.NERVE_ASSESS, tools.nerve_assess),
         ("nerve_context_curate", schemas.NERVE_CONTEXT_CURATE, tools.nerve_context_curate),
         ("nerve_context_rehydrate", schemas.NERVE_CONTEXT_REHYDRATE, tools.nerve_context_rehydrate),
+        ("nerve_context_explain", schemas.NERVE_CONTEXT_EXPLAIN, tools.nerve_context_explain),
         ("nerve_stats", schemas.NERVE_STATS, tools.nerve_stats),
         ("nerve_nervous_event", schemas.NERVE_NERVOUS_EVENT, tools.nerve_nervous_event),
         ("nerve_supervise_card", schemas.NERVE_SUPERVISE_CARD, work_tools.nerve_supervise_card),

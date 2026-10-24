@@ -324,6 +324,10 @@ def classify_path(path: Path, workdir: Path) -> str:
     over a claimed workdir; the workdir only ever classifies paths that are
     not already protected by an absolute rule.
     """
+    # Execution semantics: a relative path in a tool call or command runs
+    # against the declared working directory, not the classifier's CWD.
+    if not path.is_absolute():
+        path = workdir / path
     try:
         resolved = path.resolve(strict=False)
     except OSError:

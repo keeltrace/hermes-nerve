@@ -275,7 +275,7 @@ Nothing live was modified. The working tree is:
 
 - The live plugin (`/home/user/.hermes/plugins/nerve`) was never touched; there
   is nothing to roll back in the live environment.
-- To abandon the work: `rm -rf /home/user/Documents/LargeProjects/nerve-hitl-v2`.
+- To abandon the work: delete the `nerve-hitl-v2` scratch repository directory.
 - To diff against running code: `git -C nerve-hitl-v2 diff b270f94..HEAD`.
 - Optional hygiene (out of scope, requires authorization): remove the stale
   generic `plugin_rule:nerve:low-confidence` line from the live

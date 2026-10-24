@@ -126,7 +126,7 @@ class ConfigStatesTests(unittest.TestCase):
     def test_pending_restart_true_only_when_saved_after_host_load(self):
         from hermes_nerve.profiles import save_profile
         fake_host = types.ModuleType("hermes_cli")
-        fake_identity = {"loaded": [{"module": "hermes_nerve"}],
+        fake_identity = {"loaded_modules": [{"module": "hermes_nerve"}],
                          "plugin_root": "/srv/nerve", "source_tree_sha256": "abc"}
         with tempfile.TemporaryDirectory() as td:
             panel = _panel(td)
