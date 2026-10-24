@@ -708,16 +708,34 @@ def _register_profile(ctx):
     if not headless_worker and policy.enabled("action_gate"):ctx.register_hook("post_tool_call",gate.post_tool_call)
     if policy.enabled("work_supervision") or (not headless_worker and (policy.enabled("nervous") or policy.enabled("assistant_loops"))):
         ctx.register_hook("pre_llm_call",_pre_llm)
-    # A selected memory module now contributes real, scoped Verified Experience
-    # candidates through Hermes' structured-memory hook. Shadow/off never
-    # inject candidates, and Hermes remains the final context authority.
-    if (not headless_worker and policy.enabled("selective_context")
-            and policy.enabled("selective_context_memory")
-            and policy.enabled("verified_experience")
-            and bool(get("selective_context_enabled", True))
-            and get("selective_context_memory_mode", "apply") == "apply"):
-        from .hermes_nerve import consumer as _selective_consumer
-        ctx.register_hook("pre_llm_call", _selective_consumer.experience_context_hook)
+    # Use Hermes' supported behavior-changing request middleware. Observer
+    # hooks do not apply tool/skill selections, and pre_llm_call stringifies
+    # structured context rather than selecting it on current Hermes hosts.
+    if not headless_worker and hasattr(ctx, "register_middleware"):
+        from .hermes_nerve.context_integration import register_context_consumers
+
+        def _selective_settings():
+            from .hermes_nerve.config_resolver import resolve_config
+            live = resolve_config(ctx.get_config)
+            keys = ("selective_context_enabled", "selective_context_mandatory_skills",
+                    "selective_context_pinned_skills")
+            settings = {key: live.get_config(key, default) for key, default in
+                        zip(keys, (True, [], []))}
+            settings["selective_context_enabled"] = (
+                live.enabled("selective_context") and settings["selective_context_enabled"] is True)
+            for kind in ("memory", "tools", "skills"):
+                key = f"selective_context_{kind}_mode"
+                settings[key] = live.get_config(key, "apply") if live.enabled(f"selective_context_{kind}") else "off"
+                for bound in ("max_candidates", "max_admitted"):
+                    key = f"selective_context_{kind}_{bound}"
+                    value = live.get_config(key, None)
+                    if value is not None:
+                        settings[key] = value
+            if not live.enabled("verified_experience"):
+                settings["selective_context_memory_mode"] = "off"
+            return settings
+
+        register_context_consumers(ctx, _selective_settings)
     if policy.enabled("work_supervision") or (not headless_worker and policy.enabled("nervous")):
         ctx.register_hook("transform_tool_result",_transform_tool_result)
     if headless_worker and policy.enabled("work_supervision"):

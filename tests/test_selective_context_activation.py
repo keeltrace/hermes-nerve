@@ -47,7 +47,7 @@ class SelectiveContextActivationTests(unittest.TestCase):
             self.assertFalse(effective["selective_context_enabled"])
             for kind in ("memory", "tools", "skills"):
                 self.assertEqual(effective[f"selective_context_{kind}_mode"], "off")
-        self.assertFalse(consumer.settings_from_config({})["selective_context_enabled"])
+            self.assertFalse(consumer.settings_from_config({}, home=home)["selective_context_enabled"])
 
     def test_explicit_parent_disable_turns_every_surface_off(self):
         with tempfile.TemporaryDirectory() as home:
