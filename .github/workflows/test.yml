@@ -51,6 +51,10 @@ jobs:
 
       - name: Verify self-contained release package
         if: matrix.python-version == '3.14'
+        env:
+          # Runtime-identity hashing tests are CPU-bound. Avoid oversubscribing
+          # hosted runners; retain every test and the existing per-file deadline.
+          JEV_TEST_JOBS: "2"
         run: bash scripts/verify_dev17.sh
 
   required-matrix-compat:
@@ -82,7 +86,14 @@ jobs:
           set -euo pipefail
           git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent
           git -C /tmp/hermes-agent checkout 1c0cd667746d3395fe9e1b6c74f8f85952486f18
-          python -m pip install -e /tmp/hermes-agent
+          # Use upstream PM, not raw pip: uv.lock records intentional security
+          # overrides (e.g. Pillow 13 vs browser-harness's older exact pin).
+          HERMES_HOME="$RUNNER_TEMP/hermes-validation-home" \
+          PYTHONPATH=/tmp/hermes-agent python -m pm.build_env \
+            --source /tmp/hermes-agent \
+            --out "$RUNNER_TEMP/hermes-validation-venv" \
+            --python "$(command -v python)"
+          printf '%s\n' "$RUNNER_TEMP/hermes-validation-venv/bin" >> "$GITHUB_PATH"
 
       - name: Validate with plugin dependencies
         run: hermes plugins validate --install-deps .

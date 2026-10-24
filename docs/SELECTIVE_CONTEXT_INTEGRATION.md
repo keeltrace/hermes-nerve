@@ -166,7 +166,13 @@ suite. Its runtime job uses Python 3.14: the official pinned Hermes metadata
 allows 3.11 for updater bootstrapping but gates runtime dependencies on >=3.14.
 The first native CI attempt on 3.11 failed before validation with missing
 `ruamel.yaml`; correcting the runtime job leaves the full Nerve 3.10–3.14
-compatibility matrix intact. The locally exercised `plugin_guard.py`,
+compatibility matrix intact. CI builds the pinned runtime through upstream's
+frozen `pm.build_env` workflow, not raw pip: upstream's lock intentionally
+selects security-fixed Pillow 13 despite browser-harness's older exact pin.
+No upstream source or dependency/security policy is rewritten for CI.
+Release verification uses two parallel test processes to avoid CPU contention
+in runtime-identity hashing; all test files and the 75-second per-file deadline
+remain intact. The locally exercised `plugin_guard.py`,
 `plugin_guard_context.py` and
 `skills_guard.py` were SHA-256 compared to that exact official revision: all
 three matched byte-for-byte. Native validation passed with **caution**, not a
