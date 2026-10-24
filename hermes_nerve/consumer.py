@@ -14,25 +14,59 @@ from .selective_context import (
 )
 
 
-def settings_from_config(config):
-    """Same per-key settings/config precedence as PluginContext.get_config."""
-    try:
-        entry = config['plugins']['entries']['nerve']
-        if not isinstance(entry, Mapping):
-            return {}
-        old, new = entry.get('config', {}), entry.get('settings', {})
-        if not isinstance(old, Mapping) or not isinstance(new, Mapping):
-            return {}
-        return {**old, **new}
-    except (KeyError, TypeError):
-        return {}
+def settings_from_config(config, *, home=None):
+    """Resolve live profile-scoped Selective Context settings.
 
+    An enabled module applies selection by default. Explicit shadow/off modes
+    remain available for debugging. Missing/invalid profile state retains the
+    complete Hermes stock context instead of enabling a consumer.
+    """
+    from .config_resolver import resolve_config
+    from .profiles import ProfileStateError
+
+    off = {"selective_context_enabled": False}
+    off.update({f"selective_context_{kind}_mode": "off"
+                for kind in ("memory", "tools", "skills")})
+    try:
+        if not isinstance(config, Mapping):
+            return off
+        plugins = config.get("plugins") or {}
+        if not isinstance(plugins, Mapping):
+            return off
+        entries = plugins.get("entries") or {}
+        if not isinstance(entries, Mapping):
+            return off
+        entry = entries.get("nerve") or {}
+        if not isinstance(entry, Mapping):
+            return off
+        old, new = entry.get("config", {}), entry.get("settings", {})
+        if not isinstance(old, Mapping) or not isinstance(new, Mapping):
+            return off
+        settings = {**old, **new}
+        resolved = resolve_config(
+            lambda key, default=None: settings.get(key, default), home=home)
+        # Same sidecar-advanced precedence as the registered runtime.
+        settings.update({key: value for key, value in resolved.advanced.items()
+                         if key.startswith("selective_context_")})
+        active = (resolved.enabled("selective_context")
+                  and resolved.get_config("selective_context_enabled", True) is True)
+        settings["selective_context_enabled"] = active
+        for kind in ("memory", "tools", "skills"):
+            key = f"selective_context_{kind}_mode"
+            settings[key] = (
+                resolved.get_config(key, "apply")
+                if active and resolved.enabled(f"selective_context_{kind}")
+                else "off"
+            )
+        return settings
+    except (KeyError, TypeError, ValueError, ProfileStateError):
+        return off
 
 def _controller(settings, kind):
     if not isinstance(settings, Mapping):
         raise ValueError('settings must be a mapping')
     enabled = settings.get('selective_context_enabled', True)
-    mode = settings.get(f'selective_context_{kind}_mode', 'shadow')
+    mode = settings.get(f'selective_context_{kind}_mode', 'apply')
     if type(enabled) is not bool or mode not in ('off', 'shadow', 'apply'):
         raise ValueError('invalid mode or enable flag')
     defaults = {
@@ -250,3 +284,58 @@ def select_memory_context(envelope, goal, settings, expected_scope):
                          for i in effective)
     return text, {'schema': MEMORY_SCHEMA, 'mode': mode, 'reason': reason,
                   'authorized_ids': [i['id'] for i in vetted], 'selected_ids': [i['id'] for i in effective]}
+
+def experience_context_hook(**kwargs):
+    """Offer this Hermes profile's verified experience to the structured hook.
+
+    The active Hermes host validates the exact home/session/user scope before
+    applying memory selection. No arbitrary conversation text or cross-profile
+    memory is searched, and no provider call or storage mutation is needed.
+    """
+    goal = kwargs.get("user_message")
+    if not isinstance(goal, str) or not goal.strip():
+        return None
+    try:
+        from . import experience
+        from .paths import hermes_home
+
+        if not experience.enabled():
+            return None
+        sender = str(kwargs.get("sender_id") or "")
+        scope = {
+            "home": str(hermes_home()),
+            "session": str(kwargs.get("session_id") or ""),
+            "user": sender,
+        }
+        # Scope-aware retrieval refuses repository/user mismatches; only
+        # verified or disproven claims with evidence are prompt candidates.
+        rows = experience.default_store().retrieve(
+            goal, scope={"user": sender} if sender else {},
+            limit=24, max_tokens=1200, record=False)
+        candidates = []
+        for row in rows:
+            claim = row.get("claim") or {}
+            if claim.get("claim_type") not in ("verified", "disproven"):
+                continue
+            statement = claim.get("statement")
+            claim_id = claim.get("claim_id")
+            if not isinstance(statement, str) or not statement.strip() or not claim_id:
+                continue
+            confidence = claim.get("confidence")
+            if type(confidence) not in (int, float) or not math.isfinite(confidence):
+                continue
+            candidates.append({
+                "id": str(claim_id),
+                "source": "nerve:verified-experience",
+                "title": str(claim.get("subject") or "")[:160],
+                "text": statement[:2400],
+                "trust": max(0.0, min(1.0, float(confidence))),
+                "authorized": True,
+                "scope": scope,
+                "mandatory": claim.get("claim_type") == "disproven",
+            })
+        return {"context": {"schema": MEMORY_SCHEMA, "scope": scope,
+                            "candidates": candidates}} if candidates else None
+    except Exception:
+        # A memory index error must never interrupt the Hermes turn.
+        return None

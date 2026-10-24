@@ -16,6 +16,26 @@ Publication and production cutover require separate explicit owner authorization
 - The final source revision must pass the complete existing suite; the release package must include its license, configuration guidance, changelog, and contributor credits, and exclude credentials and private development files.
 - Nerve is a community supervisory plug-in, **not a security sandbox or a guarantee that arbitrary third-party Python code is safe**. Hermes retains execution and approval authority. Do not rely on static scan results alone as a proof of safety.
 
+## Selective Context activation (candidate change)
+
+When Selective Context and its individual Memory / Tools / Skills modules are enabled,
+their default mode is now **apply**, not shadow. Turning a module off leaves
+that surface unchanged. Operators can explicitly choose shadow to compare
+decisions without changing model-visible context.
+
+On compatible Hermes hosts, this applies: relevant tool HOT hints in Tool
+Search (without removing any core tools), demoted descriptions for less
+relevant skills (names remain discoverable), and verified/disproven Nerve
+experience through a structured, scope-checked memory hook. The memory path
+never calls a model or imports another profile's store. Explicitly scoped user
+claims are not shared with other users.
+
+**Integration requirement:** tool and skill application needs the Hermes host
+consumer bridges. Nerve cannot rewrite provider tool schemas through its
+plugin API alone. Hosts without these bridges retain stock behavior; merely
+selecting APPLY is not proof of prompt-token savings. Validate the actual
+Hermes turn before claiming a successful rollout. Legacy remains unchanged.
+
 ## Local Control Panel (0.3.2.3)
 
 Run `python3 -m hermes_nerve ui` from a checkout, or `nerve ui` after installing the Python package. A private local browser wizard lets you select Operator (the new-install default), toggle individual Nerve modules, choose a Reflex backend, preview the resolved behavior, save with one-click rollback, and install/enable the plugin in a selected Hermes home. No frontend build tools or cloud login are needed. Existing unconfigured installations retain Legacy until explicitly changed. See [Control Panel guide](docs/CONTROL_PANEL.md). Runtime state is not claimed until Hermes restarts.

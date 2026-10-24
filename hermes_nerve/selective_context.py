@@ -79,7 +79,7 @@ class AdmissionLease:
 
 @dataclass
 class SurfaceConfig:
-    mode:str="shadow"
+    mode:str="apply"
     max_candidates:int=48
     max_admitted:int=8
     min_score:float=.28
@@ -87,9 +87,9 @@ class SurfaceConfig:
 @dataclass
 class SelectiveContextConfig:
     enabled:bool=True
-    memory:SurfaceConfig=field(default_factory=lambda:SurfaceConfig("shadow",24,8,.28))
-    tools:SurfaceConfig=field(default_factory=lambda:SurfaceConfig("shadow",128,16,.18))
-    skills:SurfaceConfig=field(default_factory=lambda:SurfaceConfig("shadow",128,5,.22))
+    memory:SurfaceConfig=field(default_factory=lambda:SurfaceConfig("apply",24,8,.28))
+    tools:SurfaceConfig=field(default_factory=lambda:SurfaceConfig("apply",128,16,.18))
+    skills:SurfaceConfig=field(default_factory=lambda:SurfaceConfig("apply",128,5,.22))
     lease_enabled:bool=True
     lease_max_age_seconds:int=3600
     semantic_enabled:bool=False
@@ -441,9 +441,9 @@ def configure(**kwargs):
     global _default
     _default=ContextAdmissionController(SelectiveContextConfig(
         enabled=bool(kwargs.get("enabled",True)),
-        memory=SurfaceConfig(str(kwargs.get("memory_mode","shadow")).lower(),max(1,int(kwargs.get("memory_max_candidates",24))),max(0,int(kwargs.get("memory_max_admitted",8))),float(kwargs.get("memory_min_score",.28))),
-        tools=SurfaceConfig(str(kwargs.get("tools_mode","shadow")).lower(),max(1,int(kwargs.get("tools_max_candidates",128))),max(0,int(kwargs.get("tools_max_admitted",16))),float(kwargs.get("tools_min_score",.18))),
-        skills=SurfaceConfig(str(kwargs.get("skills_mode","shadow")).lower(),max(1,int(kwargs.get("skills_max_candidates",128))),max(0,int(kwargs.get("skills_max_admitted",5))),float(kwargs.get("skills_min_score",.22))),
+        memory=SurfaceConfig(str(kwargs.get("memory_mode","apply")).lower(),max(1,int(kwargs.get("memory_max_candidates",24))),max(0,int(kwargs.get("memory_max_admitted",8))),float(kwargs.get("memory_min_score",.28))),
+        tools=SurfaceConfig(str(kwargs.get("tools_mode","apply")).lower(),max(1,int(kwargs.get("tools_max_candidates",128))),max(0,int(kwargs.get("tools_max_admitted",16))),float(kwargs.get("tools_min_score",.18))),
+        skills=SurfaceConfig(str(kwargs.get("skills_mode","apply")).lower(),max(1,int(kwargs.get("skills_max_candidates",128))),max(0,int(kwargs.get("skills_max_admitted",5))),float(kwargs.get("skills_min_score",.22))),
         lease_enabled=bool(kwargs.get("lease_enabled",True)),lease_max_age_seconds=max(1,int(kwargs.get("lease_max_age_seconds",3600))),
         semantic_enabled=bool(kwargs.get("semantic_enabled",False))))
 

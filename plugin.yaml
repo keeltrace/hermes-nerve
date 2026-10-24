@@ -28,10 +28,10 @@ requires_env: []
 config_schema:
   nerve_profile: {type: str, default: "", description: "Optional Nerve personality: fat_cat, operator, lean, marie_kondo, or custom. Empty preserves v0.2.3 legacy behavior."}
   nerve_modules: {type: dict, default: {}, description: "Explicit per-module boolean overrides layered on the selected Nerve personality."}
-  selective_context_enabled: {type: bool, default: true, description: "Enable provider-neutral selective context planning."}
-  selective_context_memory_mode: {type: str, default: "shadow", description: "off, shadow, or apply for memory admission."}
-  selective_context_tools_mode: {type: str, default: "shadow", description: "off, shadow, or apply for tool HOT/DEFER planning."}
-  selective_context_skills_mode: {type: str, default: "shadow", description: "off, shadow, or apply for skill PIN/DISCOVER planning."}
+  selective_context_enabled: {type: bool, default: true, description: "Enable Selective Context for the active profile; enabled memory, tool and skill surfaces apply their selection by default. Explicit shadow remains available for testing."}
+  selective_context_memory_mode: {type: str, default: "apply", description: "off, shadow, or apply for memory admission."}
+  selective_context_tools_mode: {type: str, default: "apply", description: "off, shadow, or apply for tool HOT/DEFER planning."}
+  selective_context_skills_mode: {type: str, default: "apply", description: "off, shadow, or apply for skill PIN/DISCOVER planning."}
   selective_context_memory_max_candidates: {type: int, default: 24}
   selective_context_memory_max_admitted: {type: int, default: 8}
   selective_context_tools_max_candidates: {type: int, default: 128}

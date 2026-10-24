@@ -1,3 +1,23 @@
+## Unreleased — Selective Context activation semantics
+
+- Enabling the parent Selective Context module now means enabled memory, tool
+  and skill surfaces default to **apply**. Explicit shadow/off settings remain.
+  Legacy and disabled modules preserve unmodified Hermes context.
+- The Nerve consumer now honors the resolved profile sidecar, Hermes settings,
+  advanced overrides and module dependency pruning instead of incorrectly
+  reading only raw plugin settings.
+- A new structured-memory hook offers evidence-backed verified/disproven
+  experience from the active Hermes profile, with user-scoped retrieval and
+  Hermes-side home/session/user validation. Existing unscoped experience
+  remains profile-scoped.
+- Compatible Hermes host adapters can now apply tool HOT hints and skill index
+  description demotion by default. Without those host adapters, Nerve does not
+  claim that it has changed model-visible tool or skill context.
+- Added focused regression tests for on/apply, explicit shadow, disabled modules,
+  tool/skill selection, and verified-memory scope isolation.
+- This is an unmerged candidate change, not a claim of native-install or
+  full-release qualification.
+
 ## 0.4.14 — release sanitization
 
 - Observatory roots (`fleet_monitor`, `server`, `session_index`) now derive

@@ -21,7 +21,7 @@ from .privacy import canonical_hash, redact
 
 CLAIM_TYPES = {"observed", "inferred", "verified", "disproven"}
 CLAIM_STATUSES = {"active", "superseded", "contradicted", "expired"}
-_SCOPE_KEYS = ("repository", "branch", "task_type", "worker", "backend", "host", "environment")
+_SCOPE_KEYS = ("repository", "branch", "task_type", "worker", "backend", "host", "environment", "user")
 _WORD_RE = re.compile(r"[a-z0-9_./:-]+")
 _configured_enabled = False
 

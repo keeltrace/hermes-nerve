@@ -205,10 +205,10 @@ def _register_legacy(ctx):
     )
     experience.configure(enabled=False)
     selective_context.configure(
-        enabled=bool(ctx.get_config("selective_context_enabled", True)),
-        memory_mode=ctx.get_config("selective_context_memory_mode", "shadow"),
-        tools_mode=ctx.get_config("selective_context_tools_mode", "shadow"),
-        skills_mode=ctx.get_config("selective_context_skills_mode", "shadow"),
+        enabled=False,  # Legacy preserves its original selective-context-free surface.
+        memory_mode="off",
+        tools_mode="off",
+        skills_mode="off",
         memory_max_candidates=ctx.get_config("selective_context_memory_max_candidates", 24),
         memory_max_admitted=ctx.get_config("selective_context_memory_max_admitted", 8),
         tools_max_candidates=ctx.get_config("selective_context_tools_max_candidates", 128),
@@ -502,9 +502,9 @@ def _register_profile(ctx):
     experience.configure(enabled=policy.enabled("verified_experience"))
     selective_context.configure(
         enabled=policy.enabled("selective_context") and bool(get("selective_context_enabled", True)),
-        memory_mode=get("selective_context_memory_mode", "shadow") if policy.enabled("selective_context_memory") else "off",
-        tools_mode=get("selective_context_tools_mode", "shadow") if policy.enabled("selective_context_tools") else "off",
-        skills_mode=get("selective_context_skills_mode", "shadow") if policy.enabled("selective_context_skills") else "off",
+        memory_mode=get("selective_context_memory_mode", "apply") if policy.enabled("selective_context_memory") else "off",
+        tools_mode=get("selective_context_tools_mode", "apply") if policy.enabled("selective_context_tools") else "off",
+        skills_mode=get("selective_context_skills_mode", "apply") if policy.enabled("selective_context_skills") else "off",
         memory_max_candidates=get("selective_context_memory_max_candidates", 24),
         memory_max_admitted=get("selective_context_memory_max_admitted", 8),
         tools_max_candidates=get("selective_context_tools_max_candidates", 128),
@@ -708,6 +708,16 @@ def _register_profile(ctx):
     if not headless_worker and policy.enabled("action_gate"):ctx.register_hook("post_tool_call",gate.post_tool_call)
     if policy.enabled("work_supervision") or (not headless_worker and (policy.enabled("nervous") or policy.enabled("assistant_loops"))):
         ctx.register_hook("pre_llm_call",_pre_llm)
+    # A selected memory module now contributes real, scoped Verified Experience
+    # candidates through Hermes' structured-memory hook. Shadow/off never
+    # inject candidates, and Hermes remains the final context authority.
+    if (not headless_worker and policy.enabled("selective_context")
+            and policy.enabled("selective_context_memory")
+            and policy.enabled("verified_experience")
+            and bool(get("selective_context_enabled", True))
+            and get("selective_context_memory_mode", "apply") == "apply"):
+        from .hermes_nerve import consumer as _selective_consumer
+        ctx.register_hook("pre_llm_call", _selective_consumer.experience_context_hook)
     if policy.enabled("work_supervision") or (not headless_worker and policy.enabled("nervous")):
         ctx.register_hook("transform_tool_result",_transform_tool_result)
     if headless_worker and policy.enabled("work_supervision"):

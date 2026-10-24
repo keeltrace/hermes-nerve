@@ -86,9 +86,14 @@ settings. New 0.3.2.2 modules can be toggled independently:
 
 Disabling the master also prunes subordinate context surfaces. Legacy uses its
 existing compatibility registration path. Shadow Reflex mode automatically
-requests shadow_testing for named profiles. The Context tools/skills/memory
-modes default to shadow: selecting a module does not automatically enable
-aggressive filtering.
+requests shadow_testing for named profiles. When Selective Context is enabled, the Memory / Tools / Skills modules
+now default to apply, not shadow. You can explicitly set a surface to shadow
+for measurement or off to disable it. Tool and skill changes require a Hermes
+host with the Selective Context consumer bridges; where those adapters are
+absent, Hermes keeps its complete stock tool/skill access. Memory selection
+is applied only to structured, scope-authorized Verified Experience candidates.
+Legacy mode remains unchanged. A successful toggle is not, by itself, proof
+that a specific Hermes host actually applied filtering.
 
 Only manifest-declared settings are accepted; current same-profile overrides are preserved. Private
 token/password/secret fields are never exposed by the browser settings catalog.
