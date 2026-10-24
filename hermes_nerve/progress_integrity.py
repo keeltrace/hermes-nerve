@@ -7,9 +7,11 @@ with task-relative progress.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
-from pathlib import PurePosixPath
+import subprocess
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 # CHANGE_REQUIRED_RE matches a bare change verb anywhere in the text. That is too
@@ -559,4 +561,23 @@ def _looks_like_scratch(path: str) -> bool:
         return True
     if name.startswith(("tmp_", "scratch_", "repro_", "debug_")):
         return True
-    return any(part.casefold() in {"tmp", "temp", ".tmp", "scratch"} for part in p.parts)
+    in_scratch = any(part.casefold() in {"tmp", "temp", ".tmp", "scratch"} for part in p.parts)
+    if not in_scratch:
+        return False
+    # Isolated Git worktrees commonly live under Hermes' scratch directory.
+    # Their tracked source is not a throwaway probe. Require real local Git
+    # evidence, not a caller-supplied 'tracked' flag; unknown/untracked paths
+    # and failures remain scratch. Probe filenames above never qualify.
+    try:
+        actual = Path(path)
+        if not actual.is_absolute() or not actual.is_file() or actual.is_symlink():
+            return True
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith("GIT_")}
+        check = subprocess.run(
+            ["git", "-C", str(actual.parent), "ls-files", "--error-unmatch", "--", actual.name],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=1, env=env, check=False)
+        return check.returncode != 0
+    except (OSError, subprocess.TimeoutExpired):
+        return True
