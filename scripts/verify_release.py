@@ -20,8 +20,7 @@ if str(ROOT) not in sys.path:
 EXPECTED="0.4.14"
 EXPECTED_TOOLS={
  "nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_stats","nerve_nervous_event",
- "nerve_supervise_card","nerve_work_event","nerve_work_status","nerve_remote_delegate_task","nerve_remote_worker_status","nerve_remote_worker_result","nerve_remote_worker_cancel","nerve_remote_worker_control",
-}
+ "nerve_supervise_card","nerve_work_event","nerve_work_status","nerve_remote_delegate_task","nerve_remote_worker_status","nerve_remote_worker_result","nerve_remote_worker_cancel","nerve_remote_worker_control", "nerve_context_explain",}
 EXPECTED_HOOKS={"pre_tool_call","post_tool_call","pre_llm_call","transform_tool_result","pre_verify","post_api_request","api_request_error","post_llm_call","on_session_end"}
 PROFILE_FAT_CAT_TOOLS={"nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_context_explain","nerve_stats","nerve_nervous_event","nerve_supervise_card","nerve_work_event","nerve_work_status"}
 PROFILE_OPERATOR_TOOLS={"nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_context_explain","nerve_stats","nerve_nervous_event"}

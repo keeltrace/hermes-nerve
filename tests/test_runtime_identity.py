@@ -3,10 +3,18 @@ from __future__ import annotations
 import importlib.util
 import json
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover - exercised on 3.10
+    tomllib = None
+
+if tomllib is None:
+    raise unittest.SkipTest(
+        "tomllib requires Python 3.11+; runtime-identity contracts are covered on 3.11+")
 
 from hermes_nerve import tools
 from hermes_nerve.provenance import VERSION, _manifest_version, _module_code_fingerprints, runtime_identity

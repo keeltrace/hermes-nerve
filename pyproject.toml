@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "KeelTrace community"}]
+# Intentionally dependency-free (release-verifier contract): PyYAML and the
+# rest of the runtime are provided by the Hermes host environment.
 dependencies = []
 
 [project.scripts]

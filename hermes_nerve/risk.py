@@ -303,15 +303,17 @@ def classify_scope(resolved: Path) -> str:
         return "device"
     if str(resolved).startswith("/proc") or str(resolved).startswith("/sys"):
         return "kernelfs"
+    # Precedence: _home_sensitive wins over tmp roots entirely. A Hermes home
+    # may live under a temporary directory (isolated runners, profile
+    # sandboxes); a credential path — including the home's own .env — inside
+    # it must never classify as routine "tmp".
+    hs = _home_sensitive(resolved)
+    if hs is not None:
+        return hs
     if any(_within(resolved, Path(r)) for r in temp_roots()):
         return "tmp"
-    hs = _home_sensitive(resolved)
-    if hs is not None and hs != "dotenv":
-        return hs
     if any(str(resolved).startswith(p + "/") or str(resolved) == p for p in _SYSTEM_PREFIXES):
         return "system"
-    if hs == "dotenv":
-        return "dotenv"
     return ""
 
 
@@ -322,6 +324,10 @@ def classify_path(path: Path, workdir: Path) -> str:
     over a claimed workdir; the workdir only ever classifies paths that are
     not already protected by an absolute rule.
     """
+    # Execution semantics: a relative path in a tool call or command runs
+    # against the declared working directory, not the classifier's CWD.
+    if not path.is_absolute():
+        path = workdir / path
     try:
         resolved = path.resolve(strict=False)
     except OSError:
@@ -331,11 +337,16 @@ def classify_path(path: Path, workdir: Path) -> str:
         return "device"
     if str(resolved).startswith("/proc") or str(resolved).startswith("/sys"):
         return "kernelfs"
-    if any(_within(resolved, Path(r)) for r in temp_roots()):
-        return "tmp"
+    # Precedence: sensitive-home beats tmp roots (mirror classify_scope).
+    # dotenv keeps its original tail position: a project .env inside an
+    # approved workdir stays workdir work; only homes under tmp roots gain a
+    # guarantee here — their credential files (non-dotenv) can never fall
+    # through to routine "tmp".
     hs = _home_sensitive(resolved)
     if hs is not None and hs != "dotenv":
         return hs
+    if any(_within(resolved, Path(r)) for r in temp_roots()):
+        return "tmp"
     try:
         wd = workdir.resolve(strict=False)
     except OSError:

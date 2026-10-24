@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 from urllib.request import build_opener, HTTPRedirectHandler, ProxyHandler, Request
 
 from .config_resolver import resolve_config
+from .runtime_manifest import RUNTIME_ROOT_FILES, collect_runtime_files
 from .host_settings import load_host_settings
 from .modules import MODULES
 from .paths import hermes_home
@@ -208,6 +209,8 @@ class ControlPanel:
             "backups": self.snapshots(),
             "views": self.profile_views(doc, cfg),
             "states": self.config_states(settings, doc, cfg),
+            "module_override_sources": dict(getattr(cfg, "override_sources", {})),
+            "module_conflicts": list(getattr(cfg, "module_conflicts", [])),
         }
 
     def profile_views(self, doc, cfg):
@@ -223,12 +226,22 @@ class ControlPanel:
         )}
         views = {}
         for name in PROFILE_NAMES:
-            if name in ("legacy", "custom"):
+            if name == "custom":
+                # Full Configuration always mirrors the live module state:
+                # switching into custom from another profile must show the
+                # full current selection, never an empty primary list.
+                primary = sorted(k for k, on in cfg.modules.items() if on)
+            elif name == "legacy":
                 primary = sorted(k for k, on in cfg.modules.items() if on) \
-                    if cfg.profile == name else []
+                    if cfg.profile == "legacy" else []
             else:
                 defaults = PROFILES.get(name, {})
                 primary = sorted(k for k, on in defaults.items() if on)
+                if cfg.profile == name:
+                    # The CURRENT profile's simplified view shows what is
+                    # actually enabled (including override-enabled modules),
+                    # not the canonical defaults that may hide them.
+                    primary = sorted(k for k, on in cfg.modules.items() if on)
             setup = [m for m in _PROFILE_AVAILABLE_WITH_SETUP.get(name, ())
                      if m not in primary]
             views[name] = {
@@ -247,7 +260,7 @@ class ControlPanel:
         host_modules = ("hermes_cli", "hermes_agent")
         in_host = any(m in sys.modules for m in host_modules)
         identity = runtime_identity()
-        loaded = identity.get("loaded") or []
+        loaded = identity.get("loaded_modules") or []
         running = {
             "available": bool(in_host and loaded),
             "plugin_root": identity.get("plugin_root"),
@@ -826,18 +839,15 @@ class ControlPanel:
                 }).encode())
                 stage.mkdir(mode=0o700)
                 stage_created = True
-                root_names = ("plugin.yaml", "__init__.py", "CONTRIBUTORS.md", "CHANGELOG.md")
+                root_names = RUNTIME_ROOT_FILES
                 # A source checkout can contain private state beside its code.
                 # Ship Python modules and declared package assets, never an
                 # unrestricted tree (e.g. .env, .git, local databases).
-                runtime = set(package_source.rglob("*.py"))
-                for pattern in ("web/*.html", "web/*.css", "web/*.js",
-                                "university/content/*.json", "observatory/assets/*.css",
-                                "observatory/assets/*.js", "research/*.md"):
-                    runtime.update(package_source.glob(pattern))
-                runtime = {path for path in runtime
-                           if not any(part.startswith(".") or part == "__pycache__" or ".bak" in part
-                                      for part in path.relative_to(package_source).parts)}
+                # The file set comes from the shared runtime manifest so the
+                # GUI installer packages exactly what the payload installer
+                # and wheel data files ship — including policy/*.txt, which
+                # policy_tables requires at import time.
+                runtime = collect_runtime_files(package_source)
                 # Resolve no selected symlink, including directory components:
                 # copytree otherwise follows links into checkout-private data.
                 sources = [(registration_source / name, registration_source) for name in root_names]

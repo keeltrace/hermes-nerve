@@ -1,11 +1,9 @@
 name: release
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "pyproject.toml"
-      - ".github/workflows/release.yml"
+  # Publication is an explicit human action: a qualifying push to main must
+  # NEVER auto-create a public release. Run this workflow by hand only after
+  # the release candidate is approved for publication.
   workflow_dispatch:
     inputs:
       version:
@@ -42,13 +40,22 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           python - <<'PY'
-          import os, tomllib
+          import ast, os
           from pathlib import Path
           requested = os.environ.get("REQUESTED_VERSION", "").strip()
-          pyproject = tomllib.loads(Path("pyproject.toml").read_text())
-          actual = pyproject["project"]["version"]
+          # pyproject.toml declares the version dynamically, so the release
+          # identity is read from its single source of truth instead.
+          tree = ast.parse(Path("hermes_nerve/_version.py").read_text())
+          actual = None
+          for node in tree.body:
+              if isinstance(node, ast.Assign) and any(
+                  getattr(t, "id", "") == "__version__" for t in node.targets):
+                  actual = ast.literal_eval(node.value)
+                  break
+          if not actual:
+              raise SystemExit("could not resolve __version__ from hermes_nerve/_version.py")
           if requested and actual != requested:
-              raise SystemExit(f"requested version {requested!r} does not match pyproject version {actual!r}")
+              raise SystemExit(f"requested version {requested!r} does not match package version {actual!r}")
           version = requested or actual
           if ".dev" in version:
               raise SystemExit("development versions cannot be published by the stable release workflow")

@@ -17,6 +17,8 @@ class ResolvedNerveConfig:
     reasons: dict[str, str]
     _adapter: Callable = field(repr=False)
     ignored_settings_profile: str = ""
+    override_sources: dict[str, str] = field(default_factory=dict)
+    module_conflicts: list[dict[str, object]] = field(default_factory=list)
 
     def enabled(self, module: str) -> bool:
         return bool(self.modules.get(module, False))
@@ -118,10 +120,25 @@ def resolve_config(get_config: Callable | None = None, *, home=None, profile: di
     if name == "fat_cat" and not modules["remote_workers"]:
         reasons["remote_workers"] = "no remote_hosts configured"
 
-    merged_overrides = {}
+    # Module-override precedence keeps the 0.4.13 contract: Hermes config.yaml
+    # overrides apply over saved sidecar module values. The disagreement is no
+    # longer invisible — both sources and the winner are recorded per module so
+    # CLI and panel can expose exactly which authority set the effective state.
+    merged_overrides: dict[str, bool] = {}
+    override_sources: dict[str, str] = {}
+    module_conflicts: list[dict[str, object]] = []
     if use_sidecar_values and document:
-        merged_overrides.update(_parse_module_overrides(document.get("nerve_modules", {})))
-    merged_overrides.update(configured_modules)
+        for key, value in _parse_module_overrides(document.get("nerve_modules", {})).items():
+            merged_overrides[key] = value
+            override_sources[key] = "sidecar"
+    for key, value in configured_modules.items():
+        if key in merged_overrides and merged_overrides[key] != value:
+            module_conflicts.append({
+                "module": key, "sidecar": merged_overrides[key],
+                "config": value, "winner": "config",
+            })
+        merged_overrides[key] = value
+        override_sources[key] = "config"
     for key, value in merged_overrides.items():
         modules[key] = value
         reasons[key] = "explicit override"
@@ -151,7 +168,7 @@ def resolve_config(get_config: Callable | None = None, *, home=None, profile: di
                     reasons[key] = "requires " + ", ".join(missing)
                     changed = True
 
-    return ResolvedNerveConfig(name, modules, advanced, reasons, getter, ignored_settings_profile)
+    return ResolvedNerveConfig(name, modules, advanced, reasons, getter, ignored_settings_profile, override_sources, module_conflicts)
 
 
 resolve_nerve_config = resolve_config

@@ -181,7 +181,7 @@ class BrowserHarness:
             [CHROME, "--headless=new", "--no-sandbox", "--disable-gpu",
              "--disable-dev-shm-usage", f"--remote-debugging-port={self.debug_port}",
              f"--user-data-dir={self.profile_dir}", "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         deadline = time.time() + 25
         while time.time() < deadline:
             try:
@@ -192,7 +192,18 @@ class BrowserHarness:
                         return target["webSocketDebuggerUrl"]
             except Exception:
                 time.sleep(0.3)
-        raise RuntimeError("Chrome DevTools endpoint did not come up")
+        # Surface Chrome's own diagnostics instead of discarding them, so a
+        # DevTools startup failure on a runner is diagnosable from CI logs.
+        tail = ""
+        try:
+            self.chrome.terminate()
+            out, err = self.chrome.communicate(timeout=5)
+            tail = ((err or "") + (out or "")).strip()[-2000:]
+        except Exception:
+            pass
+        raise RuntimeError(
+            "Chrome DevTools endpoint did not come up"
+            + (f"; chrome output:\n{tail}" if tail else ""))
 
     def stop(self):
         if self.chrome:

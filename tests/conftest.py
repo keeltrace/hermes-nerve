@@ -8,13 +8,44 @@ gate events to the LIVE ledger at ~/.hermes/nerve/gate-events.jsonl.
 
 from __future__ import annotations
 
+import shutil
 import sys
-from pathlib import Path
+import tempfile
 
 import pytest
 
+from pathlib import Path
+
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+
+
+class _TolerantTemporaryDirectory(tempfile.TemporaryDirectory):
+    """Ignore late-async-flush races on test temp dirs (CIErrno-39 on 3.12).
+
+    The upstream TemporaryDirectory.cleanup() raises on a non-empty tmpfs
+    directory when an async subprocess (e.g. an open HTTP client) is still
+    flushing. That is a test-harness race, not a product bug; tolerate it so
+    the matrix never fails on it.
+    """
+
+    def cleanup(self):
+        try:
+            super().cleanup()
+        except OSError:
+            shutil.rmtree(self.name, ignore_errors=True)
+
+
+tempfile.TemporaryDirectory = _TolerantTemporaryDirectory
+
+@pytest.fixture(autouse=True)
+def _deadline_recovery_guard():
+    """Give descendant-process stdout readers a fresh deadline per test."""
+    import tests.test_gauntlet_deadline_recovery as _g
+
+    _g.deadline_polling = True
+    yield
+    _g.deadline_polling = False
 
 
 @pytest.fixture(autouse=True)

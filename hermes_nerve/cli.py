@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import assistant, experience
 from .config_resolver import resolve_config
+from .runtime_manifest import find_manifest
 from .host_settings import load_host_settings
 from .integrations import shared_context
 from .modules import MODULES
@@ -43,7 +44,7 @@ def _doc(profile, overrides=None, advanced=None):
 
 def _advanced_catalog():
     """Return manifest-declared advanced keys/types; fail loudly on schema drift."""
-    manifest = Path(__file__).resolve().parents[1] / "plugin.yaml"
+    manifest = find_manifest()
     pattern = re.compile(r"^  ([a-zA-Z0-9_]+): \{type: ([a-z]+), default: (.+?)(?:, description: .*)?\}$")
     try:
         lines = manifest.read_text(encoding="utf-8").splitlines()

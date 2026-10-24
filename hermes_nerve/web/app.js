@@ -68,14 +68,20 @@ function handleError(error) {
   state.lastError = error.message || String(error);
   message(state.lastError, "error");
 }
+let previewSeq = 0;
 async function refreshPreview() {
+  const seq = ++previewSeq;
   try {
     const result = await api("/api/preview", request());
+    // Request-sequence guard: drop a stale preview so an older response can
+    // never overwrite newer displayed state after rapid setting changes.
+    if (seq !== previewSeq) return;
     state.preview = result;
     state.resolved = result.modules;
     state.lastError = "";
     message("");
   } catch(error) {
+    if (seq !== previewSeq) return;
     state.preview = null;
     handleError(error);
   }

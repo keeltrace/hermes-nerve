@@ -1,12 +1,35 @@
 # Nerve
 
-## Current candidate: NOT RELEASE-READY
+## Release status (v0.4.14 candidate)
 
-This development candidate is still undergoing local qualification. Native security validation currently rejects this candidate. Do not bypass that validation or install this candidate into a serving profile.
+The v0.4.14 candidate passes the full local test suite and the stock Hermes
+security scan with verdict **caution** (zero critical findings; the remaining
+high findings are Nerve's own blocking-policy tables, which quote the exact
+patterns the engine refuses to execute — they are data, disclosed here, and a
+caution verdict installs through Hermes' standard confirmation, not a bypass).
+Native validation that reports **dangerous** is never overridden.
 
-Full-suite, installation/rollback, real-runtime and feature acceptance remain incomplete. Passing focused tests or successfully building a package does not establish release readiness. Installation and feature descriptions below are not a qualification certificate for the current candidate.
+Remaining acceptance before a release is published from this branch:
 
-Publication and production cutover require separate explicit owner authorization.
+- completely green CI on the release branch (Python 3.10–3.14 and plugin validation),
+- maintainer review and merge of PR #75 by the repository owner,
+- a clean install / upgrade / rollback / uninstall rehearsal against the exact
+  release SHA.
+
+Publication is an explicit manual action: the release workflow runs only via
+`workflow_dispatch` and never fires automatically from a push to `main`.
+Merging is a code decision; publishing is a separate release decision.
+
+### Archive content policy
+
+Release archives are built from the tracked tree at the release ref
+(`git archive`). The tracked public tree intentionally excludes internal
+planning, handoff/evidence material, build outputs, and internal reports —
+v0.4.14 removes those from the public tree. The installed plugin payload is
+additionally filtered by `hermes_nerve.runtime_manifest` (Python modules plus
+declared assets only); `scripts/` development tooling is repository content,
+not shipped payload. If engineering history is ever published on purpose, it
+is reviewed for disclosure first.
 
 ### Community release support and limitations
 

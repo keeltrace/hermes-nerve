@@ -246,7 +246,7 @@ def _manifest_version(root: Path) -> tuple[str | None, str | None]:
         root / "share" / "hermes-nerve" / "plugin.yaml",
         root.parent / "share" / "hermes-nerve" / "plugin.yaml",
         Path(sys.prefix) / "share" / "hermes-nerve" / "plugin.yaml",
-    )
+    )  # kept in lockstep with runtime_manifest.find_manifest
     for path in candidates:
         try:
             text = path.read_text(encoding="utf-8")
