@@ -1,0 +1,125 @@
+# Nerve unbounded-executable command names (policy data, auditable).
+#
+# A command on this list is never treated as bounded execution
+# (see hermes_nerve.risk._is_unbounded_executable): it reaches the full
+# classification path instead of a bounded fast-path. Exact case-sensitive
+# name match. One entry per line; blank lines and #-comments are ignored.
+# Loaded once at import; a missing, empty, or duplicate-entry table fails
+# the import loudly instead of weakening the policy.
+#
+# 'env' intentionally appears once. The original Python set literal listed
+# it twice; frozenset semantics collapse duplicates identically, and this
+# table forbids duplicates so the guard stays strict.
+#
+# privilege / host state
+sudo
+doas
+su
+pkexec
+systemctl
+service
+launchctl
+powerctl
+rebootctl
+halt
+poweroff
+init
+kill
+pkill
+killall
+#
+# storage / partition
+dd
+mkfs
+mkfs.ext4
+parted
+fdisk
+shred
+wipefs
+mount
+umount
+modprobe
+insmod
+iptables
+nft
+ufw
+#
+# remote reach / network egress
+ssh
+scp
+sftp
+rsync
+nc
+ncat
+netcat
+ftp
+telnet
+curl
+wget
+aria2c
+http
+https
+httpie
+#
+# orchestration / publishing / package managers
+docker
+podman
+kubectl
+helm
+terraform
+aws
+gcloud
+az
+gh
+npm
+pnpm
+yarn
+pip
+pip3
+uv
+cargo
+go
+#
+# environment disclosure (prints API keys, tokens, session secrets)
+printenv
+env
+set
+export
+declare
+typeset
+compgen
+#
+# schedule / accounts
+crontab
+at
+useradd
+usermod
+passwd
+visudo
+chown
+chmod
+#
+# shells and wrappers that run another program
+eval
+exec
+source
+bash
+sh
+zsh
+dash
+ksh
+fish
+timeout
+xargs
+nohup
+stdbuf
+watch
+setsid
+flock
+nice
+ionice
+taskset
+chroot
+unshare
+nsenter
+script

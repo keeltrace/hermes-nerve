@@ -1,0 +1,125 @@
+{
+ "id": "5",
+ "title": "Durable Autonomy: Kanban, DoD, Checkpoints and Recovery",
+ "summary": "Long-running work that survives interruption",
+ "lessons": [
+  {
+   "title": "DoD",
+   "body": "Definition of Done: locked criteria, observed vs verified evidence, deterministic checks before semantic judgment."
+  },
+  {
+   "title": "Checkpoints",
+   "body": "Capsules record verified criteria, failed paths, artifact links, and the next frontier - token-bound summaries."
+  },
+  {
+   "title": "Recovery",
+   "body": "Failure fingerprints, negative knowledge, and recovery playbooks prevent phantom success and thrash."
+  }
+ ],
+ "lab": {
+  "goal": "Interrupt a sandbox run and resume it from its checkpoint capsule.",
+  "steps": [
+   "Start a sandbox task with a DoD that includes a deterministic check.",
+   "Interrupt after the first checkpoint (Ctrl-C or timeout).",
+   "Resume and confirm completed criteria are not re-run."
+  ],
+  "expect": "You can name the three capsule sections and where they are stored.",
+  "task": {
+   "intro": "Answer the scenario questions; the engine verifies them deterministically in a disposable fixture. Your answers are never executed as commands.",
+   "questions": [
+    {
+     "id": "q1",
+     "q": "May a stale PASS be reused after a file changes? (yes/no)",
+     "any_of": [
+      "no"
+     ],
+     "why": "Stale PASS must be refused; evidence must be fresh."
+    },
+    {
+     "id": "q2",
+     "q": "On resume, which criteria are re-run? (all/unverified)",
+     "any_of": [
+      "unverified"
+     ],
+     "why": "Resume only the unverified frontier, not completed criteria."
+    },
+    {
+     "id": "q3",
+     "q": "Is an agent's 'done' message proof of completion? (yes/no)",
+     "any_of": [
+      "no"
+     ],
+     "why": "Claims are not proof; measured acceptance criteria decide."
+    }
+   ]
+  },
+  "executable": {
+   "task": "Produce a resume plan for an 80%-complete fixture with a stale PASS.",
+   "files": {
+    "resume-plan.json": {
+     "kind": "json",
+     "checks": [
+      {
+       "path": "rerun_scope",
+       "expect": "equals",
+       "value": "unverified_only"
+      },
+      {
+       "path": "stale_pass",
+       "expect": "equals",
+       "value": "refuse"
+      },
+      {
+       "path": "frontier.0",
+       "expect": "nonempty_str"
+      }
+     ]
+    }
+   },
+   "solution": {
+    "files": {
+     "resume-plan.json": "{\"rerun_scope\": \"unverified_only\", \"stale_pass\": \"refuse\", \"frontier\": [\"re-run failing acceptance test\"]}"
+    }
+   }
+  }
+ },
+ "check": {
+  "question": "Q: What must never be changed from memory?",
+  "expected_keywords": [
+   "canonical Kanban truth"
+  ],
+  "rubric": [
+   {
+    "id": "locked_dod",
+    "any_of": [
+     "dod",
+     "definition of done",
+     "criteria",
+     "locked"
+    ]
+   },
+   {
+    "id": "checkpoint_frontier",
+    "any_of": [
+     "checkpoint",
+     "frontier",
+     "resume",
+     "capsule"
+    ]
+   },
+   {
+    "id": "verified_not_claimed",
+    "any_of": [
+     "evidence",
+     "verified",
+     "test",
+     "proof"
+    ]
+   }
+  ]
+ },
+ "troubleshooting": [
+  "Negative knowledge records evidence-backed non-retry decisions.",
+  "Exhausted completion retries stage ONE human escalation, not a loop."
+ ]
+}

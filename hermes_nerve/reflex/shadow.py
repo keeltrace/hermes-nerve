@@ -1,18 +1,31 @@
-"""Fail-open Laya shadowing around the current authoritative Jev provider."""
+"""Fail-open provider-neutral shadowing around the authoritative Jev provider."""
 from __future__ import annotations
 
 import contextvars
+import re
 import threading
 from pathlib import Path
 from typing import Any
 
 from .telemetry import append_shadow_record
 
+# Shadow telemetry is sanitized: provider exception text may embed credentials
+# (e.g. "auth failed for sk-..."), so secret-shaped tokens are redacted before
+# any record is persisted.
+_SECRET_TEXT_RE = re.compile(
+    r"(sk-[A-Za-z0-9_\-]{6,}|Bearer\s+\S+|api[_-]?key\s*[=:]\s*\S+|[A-Za-z0-9_\-]{28,})",
+    re.IGNORECASE)
+
+
+def _sanitize_error(exc: BaseException) -> str:
+    text = f"{type(exc).__name__}: {exc}"
+    return _SECRET_TEXT_RE.sub("[REDACTED]", text)[:400]
+
 
 class ShadowProvider:
     """Return primary decisions unchanged while measuring a shadow provider.
 
-    By default the shadow call runs on a daemon thread so it does not add Laya
+    By default the shadow call runs on a daemon thread so it does not add shadow-provider
     latency to the authoritative Jev path. Set ``asynchronous=False`` for paired
     benchmarks/tests that must know the record is durable before returning.
     """
@@ -33,7 +46,7 @@ class ShadowProvider:
                 questions=questions,
                 primary=primary_response,
                 shadow=None,
-                shadow_error=f"{type(exc).__name__}: {exc}",
+                shadow_error=_sanitize_error(exc),
             )
             return
         append_shadow_record(
@@ -64,7 +77,7 @@ class ShadowProvider:
 
             thread = threading.Thread(
                 target=_shadow_under_ctx,
-                name="hermes-reflex-laya-shadow",
+                name="hermes-reflex-shadow",
                 daemon=True,
             )
             thread.start()

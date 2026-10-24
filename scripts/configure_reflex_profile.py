@@ -27,6 +27,15 @@ OPTIONS={
     'reflex_openjev_base_url':'openjev_base_url',
     'reflex_openjev_model':'openjev_model',
     'reflex_openjev_expected_identity':'openjev_expected_identity',
+    'reflex_systemone_base_url':'systemone_base_url',
+    'reflex_systemone_path':'systemone_path',
+    'reflex_systemone_model':'systemone_model',
+    'reflex_systemone_provider':'systemone_provider',
+    'reflex_systemone_expected_identity':'systemone_expected_identity',
+    'reflex_d1_base_url':'d1_base_url',
+    'reflex_d1_path':'d1_path',
+    'reflex_d1_model':'d1_model',
+    'reflex_d1_expected_identity':'d1_expected_identity',
     'work_reviewer':'orchestrator_reviewer',
 }
 
@@ -34,13 +43,22 @@ OPTIONS={
 def main() -> int:
     p=argparse.ArgumentParser()
     p.add_argument('profile')
-    p.add_argument('--backend',choices=['jev','laya','openjev','shadow'],required=True)
-    p.add_argument('--shadow-backend',choices=['laya','openjev'])
+    p.add_argument('--backend',choices=['jev','laya','openjev','systemone','d1','shadow'],required=True)
+    p.add_argument('--shadow-backend',choices=['laya','openjev','systemone','d1'])
     p.add_argument('--laya-base-url')
     p.add_argument('--laya-model')
     p.add_argument('--openjev-base-url')
     p.add_argument('--openjev-model')
     p.add_argument('--openjev-expected-identity')
+    p.add_argument('--systemone-base-url')
+    p.add_argument('--systemone-path')
+    p.add_argument('--systemone-model')
+    p.add_argument('--systemone-provider')
+    p.add_argument('--systemone-expected-identity')
+    p.add_argument('--d1-base-url')
+    p.add_argument('--d1-path')
+    p.add_argument('--d1-model')
+    p.add_argument('--d1-expected-identity')
     p.add_argument('--shadow-sync',action=argparse.BooleanOptionalAction,help='Make shadow calls synchronous for benchmark reproducibility; --no-shadow-sync makes them asynchronous')
     p.add_argument('--orchestrator-reviewer',help='Profile that owns final Nerve budget review authority')
     a=p.parse_args()
@@ -53,6 +71,22 @@ def main() -> int:
     entry=entries.setdefault(PLUGIN_ID,{})
     settings=entry.setdefault('settings',{})
     changes={'reflex_backend':a.backend}
+    if a.backend == 'shadow':
+        fallback=entry.get('config') if isinstance(entry.get('config'),dict) else {}
+        raw_modules=settings.get('nerve_modules', fallback.get('nerve_modules', {}))
+        if isinstance(raw_modules,str):
+            import json
+            try:
+                raw_modules=json.loads(raw_modules)
+            except json.JSONDecodeError as exc:
+                raise SystemExit('existing nerve_modules must be valid JSON or a mapping') from exc
+        if raw_modules in (None,''):
+            raw_modules={}
+        if not isinstance(raw_modules,dict):
+            raise SystemExit('existing nerve_modules must be a mapping')
+        modules=dict(raw_modules)
+        modules['shadow_testing']=True
+        changes['nerve_modules']=modules
     for setting,dest in OPTIONS.items():
         value=getattr(a,dest)
         if value is not None:

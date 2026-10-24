@@ -1,0 +1,131 @@
+{
+ "id": "2",
+ "title": "Configuration, Profiles and Agent Anatomy",
+ "summary": "Profiles, module toggles, and how configuration resolves",
+ "lessons": [
+  {
+   "title": "Profiles",
+   "body": "A profile is a named bundle of Nerve module settings under HERMES_HOME/nerve/profile.json plus per-profile state. Named profiles (operator, lean, legacy...) change module counts; existing profiles keep their identity until migrated."
+  },
+  {
+   "title": "Config resolution",
+   "body": "Settings resolve env -> config.yaml -> profile advanced -> defaults. The plugin registers the effective values at startup."
+  },
+  {
+   "title": "Module anatomy",
+   "body": "Modules: gate (HITL), nervous (supervision), experience, selective context, reflex providers, work, context engine, receipts, ledger."
+  }
+ ],
+ "lab": {
+  "goal": "Initialize a sandbox profile and read back the effective module set.",
+  "steps": [
+   "cd nerve-v0.4.0 && PYTHONPATH=$PWD python3 -c \"from hermes_nerve import profiles; print(profiles.list_profiles())\"",
+   "Create a scratch HERMES_HOME and initialize the operator profile through the CLI.",
+   "Print the resolved config and count enabled modules."
+  ],
+  "expect": "You can explain why an existing Legacy profile does not silently gain modules.",
+  "task": {
+   "intro": "Answer the scenario questions; the engine verifies them deterministically in a disposable fixture. Your answers are never executed as commands.",
+   "questions": [
+    {
+     "id": "q1",
+     "q": "Which file overrides config.yaml for profile settings?",
+     "any_of": [
+      "profile.json",
+      "sidecar"
+     ],
+     "why": "The profile sidecar at $HERMES_HOME/nerve/profile.json takes precedence."
+    },
+    {
+     "id": "q2",
+     "q": "Which profile is default for NEW installs? (operator/legacy)",
+     "any_of": [
+      "operator"
+     ],
+     "why": "New setups default to Operator; existing Legacy stays Legacy."
+    },
+    {
+     "id": "q3",
+     "q": "What must exist before changing a profile? (backup/rollback/either)",
+     "any_of": [
+      "backup",
+      "rollback",
+      "snapshot"
+     ],
+     "why": "A restorable backup/rollback point is required before profile changes."
+    }
+   ]
+  },
+  "executable": {
+   "task": "Produce a profile-change plan with precedence and rollback specifics.",
+   "files": {
+    "profile-plan.json": {
+     "kind": "json",
+     "checks": [
+      {
+       "path": "target_profile",
+       "expect": "equals",
+       "value": "operator"
+      },
+      {
+       "path": "precedence.source",
+       "expect": "equals",
+       "value": "profile.json"
+      },
+      {
+       "path": "rollback.artifact",
+       "expect": "minlen",
+       "value": 4
+      }
+     ]
+    }
+   },
+   "solution": {
+    "files": {
+     "profile-plan.json": "{\"target_profile\": \"operator\", \"precedence\": {\"source\": \"profile.json\"}, \"rollback\": {\"artifact\": \"backup-tarball\"}}"
+    }
+   }
+  }
+ },
+ "check": {
+  "question": "Q: Which profile is applied to newly initialized installs by default?",
+  "expected_keywords": [
+   "operator"
+  ],
+  "rubric": [
+   {
+    "id": "profiles_names",
+    "any_of": [
+     "operator",
+     "fat cat",
+     "lean",
+     "marie kondo",
+     "legacy",
+     "profile"
+    ]
+   },
+   {
+    "id": "precedence",
+    "any_of": [
+     "profile.json",
+     "sidecar",
+     "override",
+     "precedence"
+    ]
+   },
+   {
+    "id": "backup_rollback",
+    "any_of": [
+     "backup",
+     "rollback",
+     "restore",
+     "snapshot"
+    ]
+   }
+  ]
+ },
+ "troubleshooting": [
+  "Module counts are exact per profile - do not hand-edit profile.json; use the CLI.",
+  "Headless workers run with zero auxiliary tools by design."
+ ]
+}

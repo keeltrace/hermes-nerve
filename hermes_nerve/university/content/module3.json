@@ -1,0 +1,129 @@
+{
+ "id": "3",
+ "title": "Delegation and Bounded Parallel Teams",
+ "summary": "Kanban authority, workers, and isolated workspaces",
+ "lessons": [
+  {
+   "title": "Kanban authority",
+   "body": "The Hermes Kanban board is canonical. Workers propose; controllers verify; only controller-owned dispatch mutates terminal state."
+  },
+  {
+   "title": "Bounded teams",
+   "body": "Parallel workers get isolated worktrees and scoped toolsets; the supervisor watches progress, thrash, and budget."
+  },
+  {
+   "title": "Completion integrity",
+   "body": "Completion is verified (deterministic criteria first, semantic second). Workers cannot self-complete."
+  }
+ ],
+ "lab": {
+  "goal": "Trace a task from creation to verified completion naming each authority boundary.",
+  "steps": [
+   "In a sandbox, create a kanban task via the Hermes CLI.",
+   "Dispatch a worker and observe the supervisor diagnostics (nerve_work_event rows).",
+   "Attempt a worker self-completion and observe the controller-owned conversion."
+  ],
+  "expect": "You can draw the authority diagram from memory.",
+  "task": {
+   "intro": "Answer the scenario questions; the engine verifies them deterministically in a disposable fixture. Your answers are never executed as commands.",
+   "questions": [
+    {
+     "id": "q1",
+     "q": "May two workers own the same mutable artifact? (yes/no)",
+     "any_of": [
+      "no"
+     ],
+     "why": "No two workers may own the same mutable artifact."
+    },
+    {
+     "id": "q2",
+     "q": "Name one isolation mechanism for parallel workers.",
+     "any_of": [
+      "worktree",
+      "workspace",
+      "isolat"
+     ],
+     "why": "Worktrees or separate isolated workspaces prevent shared-tree races."
+    },
+    {
+     "id": "q3",
+     "q": "What must each delegated task end with? (evidence/none)",
+     "any_of": [
+      "evidence",
+      "acceptance",
+      "gate",
+      "verif"
+     ],
+     "why": "Each task needs a tangible output plus a verification gate."
+    }
+   ]
+  },
+  "executable": {
+   "task": "Design a two-role team plan where no artifact has two owners.",
+   "files": {
+    "team-plan.json": {
+     "kind": "json",
+     "checks": [
+      {
+       "path": "roles",
+       "expect": "minlen",
+       "value": 2
+      },
+      {
+       "path": "roles.0.owns",
+       "expect": "minlen",
+       "value": 1
+      },
+      {
+       "path": "integration_gate",
+       "expect": "nonempty_str"
+      }
+     ]
+    }
+   },
+   "solution": {
+    "files": {
+     "team-plan.json": "{\"roles\": [{\"name\": \"implementer\", \"owns\": [\"src/\"]}, {\"name\": \"reviewer\", \"owns\": [\"reviews/\"]}], \"integration_gate\": \"reviewer approval + tests pass\"}"
+    }
+   }
+  }
+ },
+ "check": {
+  "question": "Q: Who owns the final COMPLETE transition of a Kanban task?",
+  "expected_keywords": [
+   "controller-owned native dispatch"
+  ],
+  "rubric": [
+   {
+    "id": "scoped_roles",
+    "any_of": [
+     "role",
+     "owner",
+     "scope"
+    ]
+   },
+   {
+    "id": "isolation",
+    "any_of": [
+     "worktree",
+     "workspace",
+     "isolat",
+     "separate"
+    ]
+   },
+   {
+    "id": "evidence_handoff",
+    "any_of": [
+     "handoff",
+     "evidence",
+     "acceptance",
+     "gate"
+    ]
+   }
+  ]
+ },
+ "troubleshooting": [
+  "Worker-authored SQLite/CLI lifecycle mutation is fenced by the plugin.",
+  "Block submissions pass the deterministic block-review judge first."
+ ]
+}

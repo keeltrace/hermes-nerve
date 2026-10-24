@@ -6,8 +6,8 @@ import json
 
 from .context import curate_context
 from .engine import DecisionEngine
-from . import assistant, gate, ledger, lifecycle, receipts, nervous
-from .provenance import execution_provenance, result_provenance
+from . import assistant, experience, gate, ledger, lifecycle, receipts, nervous, selective_context
+from .provenance import execution_provenance, result_provenance, runtime_identity
 
 _engine_factory = DecisionEngine
 
@@ -152,6 +152,35 @@ def nerve_context_rehydrate(args: dict, **kwargs) -> str:
         return _error(exc)
 
 
+def nerve_context_explain(args: dict, **kwargs) -> str:
+    """Explain why local verified experience is believed or retrieved."""
+    try:
+        store = experience.default_store()
+        claim_id = str(args.get("claim_id") or "").strip()
+        query = str(args.get("query") or "").strip()
+        if claim_id:
+            payload = {"explanation": store.explain(claim_id)}
+        elif query:
+            payload = {
+                "query_sha256": experience.canonical_hash(query),
+                "matches": store.retrieve(
+                    query,
+                    scope=args.get("scope") if isinstance(args.get("scope"), dict) else None,
+                    limit=args.get("limit", 8),
+                    include_contradicted=bool(args.get("include_contradicted", False)),
+                ),
+            }
+        else:
+            payload = {"experience": store.report()}
+        return _ok({
+            "contract": str(args.get("contract") or "context-explain/v1"),
+            **payload,
+            "execution": execution_provenance(live_provider_call=False, transport="local-verified-experience"),
+        })
+    except Exception as exc:
+        return _error(exc)
+
+
 
 def nerve_nervous_event(args: dict, **kwargs) -> str:
     try:
@@ -244,7 +273,7 @@ def nerve_stats(args: dict, **kwargs) -> str:
     """Bounded local telemetry. Default is deliberately compact (v0.2.1)."""
     try:
         section = str(args.get("section") or "summary").strip().lower()
-        allowed = {"summary", "receipts", "gate", "context", "nervous", "quality", "outcomes", "all"}
+        allowed = {"summary", "receipts", "gate", "context", "selective_context", "nervous", "quality", "outcomes", "identity", "all"}
         if section not in allowed:
             raise ValueError(f"section must be one of: {', '.join(sorted(allowed))}")
         try:
@@ -260,6 +289,7 @@ def nerve_stats(args: dict, **kwargs) -> str:
             recent_limit=recent_limit, include_recent=include_recent,
             include_outcomes=section in {"outcomes", "all"},
         )
+        identity = runtime_identity()
 
         base = {
             "contract": "stats/v2",
@@ -273,21 +303,31 @@ def nerve_stats(args: dict, **kwargs) -> str:
                 "recent": "rolling current-process or ledger tail, only when include_recent=true",
             },
             "execution": execution_provenance(live_provider_call=False, transport="local-telemetry"),
+            "runtime_identity": {key: identity.get(key) for key in (
+                "version", "build_id", "loaded_code_tree_sha256", "status", "issues", "plugin_root", "module_roots",
+                "manifest_path", "manifest_version", "package_version", "package_metadata_path", "source_tree_sha256",
+                "loaded_module_count",
+            )},
         }
         if section == "summary":
             base.update({
                 "receipts": _compact_receipts(receipt_report),
                 "gate": _compact_gate(gate_report),
                 "context": _compact_context(context_report),
+                "selective_context": selective_context.report(),
                 "nervous": _compact_nervous(nervous_report),
                 "note": "Compact by default to avoid tool-result context bloat. Use section=... and include_recent=true for targeted detail.",
             })
+        elif section == "identity":
+            base["runtime_identity"] = identity
         elif section == "receipts":
             base["receipts"] = receipt_report
         elif section == "gate":
             base["gate"] = gate_report
         elif section == "context":
             base["context"] = context_report
+        elif section == "selective_context":
+            base["selective_context"] = selective_context.report()
         elif section == "nervous":
             base["nervous"] = nervous_report
         elif section == "quality":
@@ -299,6 +339,7 @@ def nerve_stats(args: dict, **kwargs) -> str:
                 "receipts": receipt_report,
                 "gate": gate_report,
                 "context": context_report,
+                "selective_context": selective_context.report(),
                 "nervous": nervous_report,
             })
 

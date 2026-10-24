@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 try:
-    from .hermes_nerve import assistant, client, context, gate, ledger, nervous, receipts, schemas, tools
+    from .hermes_nerve import assistant, client, context, experience, gate, ledger, nervous, receipts, schemas, selective_context, tools
     from .hermes_nerve import reflex
     from .hermes_nerve.config_resolver import resolve_config
     # Import the module, not the class: Hermes' context-engine directory loader
@@ -21,7 +21,7 @@ try:
     from .hermes_nerve.work import runtime as work_runtime
     from .hermes_nerve.work import tools as work_tools
 except ImportError:
-    from hermes_nerve import assistant, client, context, gate, ledger, nervous, receipts, schemas, tools
+    from hermes_nerve import assistant, client, context, experience, gate, ledger, nervous, receipts, schemas, selective_context, tools
     from hermes_nerve import reflex
     from hermes_nerve.config_resolver import resolve_config
     from hermes_nerve import context_engine as nerve_context_engine
@@ -39,6 +39,18 @@ logger=logging.getLogger("hermes_nerve")
 # only from its own entry, plugins.entries.<plugin id> (settings, then the older config
 # subtree), and the plugin id is "nerve".
 _LEGACY_SETTINGS_ENTRY = "hermes-nerve"
+
+
+def _log_reflex_runtime() -> None:
+    cfg = reflex.settings()
+    logger.info(
+        "Nerve Reflex configured backend=%s shadow_backend=%s shadow_async=%s d1_model=%s d1_identity_pin=%s",
+        cfg.get("backend"),
+        cfg.get("shadow_backend"),
+        cfg.get("shadow_async"),
+        cfg.get("d1_model"),
+        bool(cfg.get("d1_expected_identity")),
+    )
 
 
 def _warn_if_legacy_settings_ignored(ctx):
@@ -64,6 +76,77 @@ def _warn_if_legacy_settings_ignored(ctx):
     )
 
 
+def _load_append_jsonl():
+    """Resolve hermes_nerve.jsonl across load modes.
+
+    The plugin entrypoint is the package root (``nerve/__init__.py``), so a
+    plain ``from .jsonl import ...`` targets ``nerve.jsonl`` and fails; the
+    host may also load this file without putting the plugin dir on sys.path.
+    Resolution order covers package submodule, absolute, then relative forms.
+    """
+    import importlib
+
+    attempts = []
+    if __package__:
+        attempts.append(f"{__package__}.hermes_nerve.jsonl")
+    attempts.extend(["hermes_nerve.jsonl", ".jsonl"])
+    last: Exception | None = None
+    for name in attempts:
+        try:
+            if name.startswith("."):
+                module = importlib.import_module(name, package=__package__)
+            else:
+                module = importlib.import_module(name)
+            return module.append_jsonl
+        except Exception as exc:  # noqa: BLE001 - try the next form
+            last = exc
+    raise last or ImportError("hermes_nerve.jsonl not importable")
+
+
+def _nerve_hook_trace_sink(record):
+    """Bounded, sanitized per-callback pre-tool trace (P0 instrumentation).
+
+    Module-level so BOTH registration paths (modular profile and legacy) can
+    use it; a function-local helper here previously raised NameError inside
+    _register_profile and silently aborted pre-tool hook registration.
+    """
+    try:
+        append_jsonl = _load_append_jsonl()
+        import os as _os
+        from pathlib import Path as _Path
+        # Prefer the explicitly configured home: a host-level cached resolver
+        # must not redirect diagnostics away from the session's own home.
+        explicit = str(_os.getenv("HERMES_HOME") or "").strip()
+        if explicit:
+            home = _Path(explicit).expanduser()
+        else:
+            try:
+                from hermes_nerve.paths import hermes_home
+            except ImportError:  # loaded as a package submodule
+                from .paths import hermes_home
+            home = hermes_home()
+        path = home / "nerve" / "hook-trace.jsonl"
+        try:
+            if path.exists() and path.stat().st_size > 2_000_000:
+                path.replace(path.with_suffix(".old"))
+        except OSError:
+            pass
+        append_jsonl(path, record)
+    except Exception as _exc:
+        # Never break the control chain, but make the failure diagnosable
+        # instead of silently losing instrumentation.
+        try:
+            import os as _os2
+            from pathlib import Path as _P2
+            home2 = _P2(str(_os2.getenv("HERMES_HOME") or _os2.path.expanduser("~/.hermes")))
+            home2.joinpath("nerve").mkdir(parents=True, exist_ok=True)
+            with open(home2 / "nerve" / "hook-trace-error.log", "a", encoding="utf-8") as fh:
+                fh.write(f"{type(_exc).__name__}: {str(_exc)[:200]}\n")
+        except Exception:
+            pass
+        if str(__import__("os").getenv("NERVE_TRACE_DEBUG") or "") == "1":
+            raise
+
 def _register_legacy(ctx):
     is_kanban_worker = bool(
         str(os.getenv("HERMES_KANBAN_TASK") or os.getenv("HERMES_KANBAN_TASK_ID") or "").strip()
@@ -71,7 +154,7 @@ def _register_legacy(ctx):
     headless_worker = is_kanban_worker and bool(ctx.get_config("work_headless_workers", True))
     legacy_model = ctx.get_config("model_id", "typesafe/jev-1.13")
     client.configure(
-        provider=ctx.get_config("jev_provider", "openrouter"),
+        provider=ctx.get_config("jev_provider", None),
         model=ctx.get_config("jev_model", legacy_model),
         typesafe_model=ctx.get_config("typesafe_model", "jev-latest"),
         opencode_model=ctx.get_config("opencode_model", "jev-1.13"),
@@ -88,20 +171,53 @@ def _register_legacy(ctx):
         openjev_timeout_seconds=ctx.get_config("reflex_openjev_timeout_seconds", os.getenv("HERMES_REFLEX_OPENJEV_TIMEOUT", 10.0)),
         openjev_token=ctx.get_config("reflex_openjev_token", os.getenv("HERMES_REFLEX_OPENJEV_TOKEN", "")),
         openjev_expected_identity=ctx.get_config("reflex_openjev_expected_identity", os.getenv("HERMES_REFLEX_OPENJEV_EXPECTED_IDENTITY", "")),
+        systemone_base_url=ctx.get_config("reflex_systemone_base_url", os.getenv("HERMES_REFLEX_SYSTEMONE_BASE_URL", "http://127.0.0.1:8080")),
+        systemone_path=ctx.get_config("reflex_systemone_path", os.getenv("HERMES_REFLEX_SYSTEMONE_PATH", "/v1/systemone")),
+        systemone_model=ctx.get_config("reflex_systemone_model", os.getenv("HERMES_REFLEX_SYSTEMONE_MODEL", "")),
+        systemone_timeout_seconds=ctx.get_config("reflex_systemone_timeout_seconds", os.getenv("HERMES_REFLEX_SYSTEMONE_TIMEOUT", 5.0)),
+        systemone_token=ctx.get_config("reflex_systemone_token", os.getenv("HERMES_REFLEX_SYSTEMONE_TOKEN", "")),
+        systemone_provider=ctx.get_config("reflex_systemone_provider", os.getenv("HERMES_REFLEX_SYSTEMONE_PROVIDER", "SystemOne")),
+        systemone_expected_identity=ctx.get_config("reflex_systemone_expected_identity", os.getenv("HERMES_REFLEX_SYSTEMONE_EXPECTED_IDENTITY", "")),
+        d1_base_url=ctx.get_config("reflex_d1_base_url", os.getenv("HERMES_REFLEX_D1_BASE_URL", "http://127.0.0.1:8080")),
+        d1_path=ctx.get_config("reflex_d1_path", os.getenv("HERMES_REFLEX_D1_PATH", "/v1/systemone")),
+        d1_model=ctx.get_config("reflex_d1_model", os.getenv("HERMES_REFLEX_D1_MODEL", "LiquidAI/d1-3B")),
+        d1_timeout_seconds=ctx.get_config("reflex_d1_timeout_seconds", os.getenv("HERMES_REFLEX_D1_TIMEOUT", 5.0)),
+        d1_token=ctx.get_config("reflex_d1_token", os.getenv("HERMES_REFLEX_D1_TOKEN", "")),
+        d1_expected_identity=ctx.get_config("reflex_d1_expected_identity", os.getenv("HERMES_REFLEX_D1_EXPECTED_IDENTITY", "")),
         shadow_backend=ctx.get_config("reflex_shadow_backend", "laya"),
         shadow_async=ctx.get_config("reflex_shadow_async", True),
         shadow_log=ctx.get_config("reflex_shadow_log", ""),
     )
+    _log_reflex_runtime()
     gate.configure(
         mode=ctx.get_config("gate_mode", os.getenv("HERMES_NERVE_GATE_MODE", "off")),
         min_confidence=ctx.get_config("min_confidence", 0.80),
         min_allow_probability=ctx.get_config("min_allow_probability", os.getenv("HERMES_NERVE_MIN_ALLOW_PROBABILITY", 0.90)),
         scope=ctx.get_config("gate_scope", "selective"),
+        risk_preflight=ctx.get_config("gate_risk_preflight", True),
+        learned_preferences=ctx.get_config("gate_learned_preferences", True),
+        preference_min_samples=ctx.get_config("gate_preference_min_samples", 2),
     )
     receipts.configure(detail=ctx.get_config("receipt_detail", "hash"))
     ledger.configure(
         enabled=ctx.get_config("context_ledger_enabled", True),
         detail=ctx.get_config("context_ledger_detail", "sanitized"),
+    )
+    experience.configure(enabled=False)
+    selective_context.configure(
+        enabled=bool(ctx.get_config("selective_context_enabled", True)),
+        memory_mode=ctx.get_config("selective_context_memory_mode", "shadow"),
+        tools_mode=ctx.get_config("selective_context_tools_mode", "shadow"),
+        skills_mode=ctx.get_config("selective_context_skills_mode", "shadow"),
+        memory_max_candidates=ctx.get_config("selective_context_memory_max_candidates", 24),
+        memory_max_admitted=ctx.get_config("selective_context_memory_max_admitted", 8),
+        tools_max_candidates=ctx.get_config("selective_context_tools_max_candidates", 128),
+        tools_max_admitted=ctx.get_config("selective_context_tools_max_admitted", 16),
+        skills_max_candidates=ctx.get_config("selective_context_skills_max_candidates", 128),
+        skills_max_admitted=ctx.get_config("selective_context_skills_max_admitted", 5),
+        lease_enabled=ctx.get_config("selective_context_lease_enabled", True),
+        lease_max_age_seconds=ctx.get_config("selective_context_lease_max_age_seconds", 3600),
+        semantic_enabled=ctx.get_config("selective_context_semantic_enabled", False),
     )
     nervous.configure(
         enabled=ctx.get_config("nervous_enabled", True),
@@ -114,7 +230,11 @@ def _register_legacy(ctx):
         retain_recent_events=ctx.get_config("nervous_retain_recent_events", 64),
         emit_prompt_hint=ctx.get_config("nervous_emit_prompt_hint", False),
         local_learning=ctx.get_config("nervous_local_learning", True),
+        admission_risk_floor=ctx.get_config("nervous_admission_risk_floor", True),
         local_learning_min_samples=ctx.get_config("nervous_local_learning_min_samples", 8),
+        policy_memory_enabled=ctx.get_config("nervous_policy_memory_enabled", True),
+        policy_memory_ttl_seconds=ctx.get_config("nervous_policy_memory_ttl_seconds", 3600),
+        policy_memory_path=ctx.get_config("nervous_policy_memory_path", ""),
         repeated_failure_local_replan_at=ctx.get_config("nervous_repeated_failure_local_replan_at", 3),
     )
     context.configure(
@@ -216,15 +336,18 @@ def _register_legacy(ctx):
         for name, schema, handler in registrations:
             ctx.register_tool(name=name, toolset="nerve", schema=schema, handler=handler)
 
-    def _pre_tool_control(**kwargs):
-        callbacks = (remote_control.pre_tool_call, work_hooks.pre_tool_call)
-        if not headless_worker:
-            callbacks += (nervous.pre_tool_call, gate.pre_tool_call)
-        for callback in callbacks:
-            directive = callback(**kwargs)
-            if directive is not None:
-                return directive
-        return None
+
+    _pre_tool_callbacks = (
+        ("remote_control", remote_control.pre_tool_call),
+        ("work_supervision", work_hooks.pre_tool_call),
+    )
+    if not headless_worker:
+        _pre_tool_callbacks += (
+            ("nervous", nervous.pre_tool_call),
+            ("action_gate", gate.pre_tool_call, True),
+        )
+    _pre_tool_control = gate.instrument_pre_tool_chain(
+        _pre_tool_callbacks, _nerve_hook_trace_sink)
 
     def _pre_llm(**kwargs):
         work_result = work_hooks.pre_llm_call(**kwargs)
@@ -250,12 +373,16 @@ def _register_legacy(ctx):
         work_hooks.on_session_end(**kwargs)
         if not headless_worker:
             nervous.on_session_end(**kwargs)
+        from . import advisory as _advisory
+        _advisory.shutdown()
+        _advisory.write_health_snapshot()
 
     ctx.register_hook("pre_tool_call", _pre_tool_control)
     ctx.register_hook("post_tool_call", work_hooks.post_tool_call)
     if not headless_worker:
         ctx.register_hook("post_tool_call", ledger.observe_tool_call)
         ctx.register_hook("post_tool_call", nervous.post_tool_call)
+        ctx.register_hook("post_tool_call", gate.post_tool_call)
     ctx.register_hook("pre_llm_call", _pre_llm)
     ctx.register_hook("transform_tool_result", _transform_tool_result)
     ctx.register_hook("pre_verify", work_hooks.pre_verify if headless_worker else nervous.pre_verify)
@@ -319,7 +446,7 @@ def _register_profile(ctx):
     if provider_needed:
         legacy_model=get("model_id","typesafe/jev-1.13")
         client.configure(
-            provider=get("jev_provider","openrouter"),
+            provider=get("jev_provider",None),
             model=get("jev_model",legacy_model),
             typesafe_model=get("typesafe_model","jev-latest"),
             opencode_model=get("opencode_model","jev-1.13"),
@@ -339,21 +466,54 @@ def _register_profile(ctx):
             openjev_timeout_seconds=get("reflex_openjev_timeout_seconds",os.getenv("HERMES_REFLEX_OPENJEV_TIMEOUT",10.0)),
             openjev_token=get("reflex_openjev_token",os.getenv("HERMES_REFLEX_OPENJEV_TOKEN","")),
             openjev_expected_identity=get("reflex_openjev_expected_identity",os.getenv("HERMES_REFLEX_OPENJEV_EXPECTED_IDENTITY","")),
+            systemone_base_url=get("reflex_systemone_base_url",os.getenv("HERMES_REFLEX_SYSTEMONE_BASE_URL","http://127.0.0.1:8080")),
+            systemone_path=get("reflex_systemone_path",os.getenv("HERMES_REFLEX_SYSTEMONE_PATH","/v1/systemone")),
+            systemone_model=get("reflex_systemone_model",os.getenv("HERMES_REFLEX_SYSTEMONE_MODEL","")),
+            systemone_timeout_seconds=get("reflex_systemone_timeout_seconds",os.getenv("HERMES_REFLEX_SYSTEMONE_TIMEOUT",5.0)),
+            systemone_token=get("reflex_systemone_token",os.getenv("HERMES_REFLEX_SYSTEMONE_TOKEN","")),
+            systemone_provider=get("reflex_systemone_provider",os.getenv("HERMES_REFLEX_SYSTEMONE_PROVIDER","SystemOne")),
+            systemone_expected_identity=get("reflex_systemone_expected_identity",os.getenv("HERMES_REFLEX_SYSTEMONE_EXPECTED_IDENTITY","")),
+            d1_base_url=get("reflex_d1_base_url",os.getenv("HERMES_REFLEX_D1_BASE_URL","http://127.0.0.1:8080")),
+            d1_path=get("reflex_d1_path",os.getenv("HERMES_REFLEX_D1_PATH","/v1/systemone")),
+            d1_model=get("reflex_d1_model",os.getenv("HERMES_REFLEX_D1_MODEL","LiquidAI/d1-3B")),
+            d1_timeout_seconds=get("reflex_d1_timeout_seconds",os.getenv("HERMES_REFLEX_D1_TIMEOUT",5.0)),
+            d1_token=get("reflex_d1_token",os.getenv("HERMES_REFLEX_D1_TOKEN","")),
+            d1_expected_identity=get("reflex_d1_expected_identity",os.getenv("HERMES_REFLEX_D1_EXPECTED_IDENTITY","")),
             shadow_backend=get("reflex_shadow_backend","laya"),
             shadow_async=get("reflex_shadow_async",True),
             shadow_log=get("reflex_shadow_log",""),
         )
+        _log_reflex_runtime()
 
     gate.configure(
         mode=profile_default("gate_mode",os.getenv("HERMES_NERVE_GATE_MODE","advisory")) if policy.enabled("action_gate") and not headless_worker else "off",
         min_confidence=get("min_confidence",0.80),
         min_allow_probability=get("min_allow_probability",os.getenv("HERMES_NERVE_MIN_ALLOW_PROBABILITY",0.90)),
         scope=get("gate_scope","selective"),
+        risk_preflight=get("gate_risk_preflight",True),
+        learned_preferences=get("gate_learned_preferences",True),
+        preference_min_samples=get("gate_preference_min_samples",2),
     )
     receipts.configure(enabled=policy.enabled("receipts"),detail=get("receipt_detail","hash"))
     ledger.configure(
         enabled=policy.enabled("context_governor") and bool(get("context_ledger_enabled",True)),
         detail=get("context_ledger_detail","sanitized"),
+    )
+    experience.configure(enabled=policy.enabled("verified_experience"))
+    selective_context.configure(
+        enabled=policy.enabled("selective_context") and bool(get("selective_context_enabled", True)),
+        memory_mode=get("selective_context_memory_mode", "shadow") if policy.enabled("selective_context_memory") else "off",
+        tools_mode=get("selective_context_tools_mode", "shadow") if policy.enabled("selective_context_tools") else "off",
+        skills_mode=get("selective_context_skills_mode", "shadow") if policy.enabled("selective_context_skills") else "off",
+        memory_max_candidates=get("selective_context_memory_max_candidates", 24),
+        memory_max_admitted=get("selective_context_memory_max_admitted", 8),
+        tools_max_candidates=get("selective_context_tools_max_candidates", 128),
+        tools_max_admitted=get("selective_context_tools_max_admitted", 16),
+        skills_max_candidates=get("selective_context_skills_max_candidates", 128),
+        skills_max_admitted=get("selective_context_skills_max_admitted", 5),
+        lease_enabled=get("selective_context_lease_enabled", True),
+        lease_max_age_seconds=get("selective_context_lease_max_age_seconds", 3600),
+        semantic_enabled=get("selective_context_semantic_enabled", False),
     )
     nervous.configure(
         enabled=policy.enabled("nervous") and bool(get("nervous_enabled",True)),
@@ -367,6 +527,10 @@ def _register_profile(ctx):
         emit_prompt_hint=get("nervous_emit_prompt_hint",False),
         local_learning=policy.enabled("local_learning") and bool(get("nervous_local_learning",True)),
         local_learning_min_samples=get("nervous_local_learning_min_samples",8),
+        policy_memory_enabled=bool(get("nervous_policy_memory_enabled",True)),
+        policy_memory_ttl_seconds=get("nervous_policy_memory_ttl_seconds",3600),
+        policy_memory_path=get("nervous_policy_memory_path",""),
+        admission_risk_floor=bool(get("nervous_admission_risk_floor",True)),
         repeated_failure_local_replan_at=get("nervous_repeated_failure_local_replan_at",3),
     )
     context.configure(
@@ -470,6 +634,7 @@ def _register_profile(ctx):
         registrations += [
             ("nerve_context_curate",schemas.NERVE_CONTEXT_CURATE,tools.nerve_context_curate),
             ("nerve_context_rehydrate",schemas.NERVE_CONTEXT_REHYDRATE,tools.nerve_context_rehydrate),
+            ("nerve_context_explain",schemas.NERVE_CONTEXT_EXPLAIN,tools.nerve_context_explain),
         ]
     if policy.enabled("receipts"):
         registrations.append(("nerve_stats",schemas.NERVE_STATS,tools.nerve_stats))
@@ -496,16 +661,12 @@ def _register_profile(ctx):
         for name,schema,handler in registrations:
             ctx.register_tool(name=name,toolset="nerve",schema=schema,handler=handler)
 
-    def _pre_tool_control(**kwargs):
-        callbacks=[]
-        if policy.enabled("remote_workers"): callbacks.append(remote_control.pre_tool_call)
-        if policy.enabled("work_supervision"): callbacks.append(work_hooks.pre_tool_call)
-        if not headless_worker and policy.enabled("nervous"): callbacks.append(nervous.pre_tool_call)
-        if not headless_worker and policy.enabled("action_gate"): callbacks.append(gate.pre_tool_call)
-        for callback in callbacks:
-            directive=callback(**kwargs)
-            if directive is not None:return directive
-        return None
+    _pre_tool_callbacks=[]
+    if policy.enabled("remote_workers"): _pre_tool_callbacks.append(("remote_workers", remote_control.pre_tool_call))
+    if policy.enabled("work_supervision"): _pre_tool_callbacks.append(("work_supervision", work_hooks.pre_tool_call))
+    if not headless_worker and policy.enabled("nervous"): _pre_tool_callbacks.append(("nervous", nervous.pre_tool_call))
+    if not headless_worker and policy.enabled("action_gate"): _pre_tool_callbacks.append(("action_gate", gate.pre_tool_call, True))
+    _pre_tool_control=gate.instrument_pre_tool_chain(_pre_tool_callbacks,_nerve_hook_trace_sink)
 
     def _pre_llm(**kwargs):
         hints=[]
@@ -535,12 +696,16 @@ def _register_profile(ctx):
     def _session_end(**kwargs):
         if policy.enabled("work_supervision"):work_hooks.on_session_end(**kwargs)
         if not headless_worker and policy.enabled("nervous"):nervous.on_session_end(**kwargs)
+        from . import advisory as _advisory
+        _advisory.shutdown()
+        _advisory.write_health_snapshot()
 
     pre_tool_needed=policy.enabled("remote_workers") or policy.enabled("work_supervision") or (not headless_worker and (policy.enabled("nervous") or policy.enabled("action_gate")))
     if pre_tool_needed:ctx.register_hook("pre_tool_call",_pre_tool_control)
     if policy.enabled("work_supervision"):ctx.register_hook("post_tool_call",work_hooks.post_tool_call)
     if not headless_worker and policy.enabled("context_governor"):ctx.register_hook("post_tool_call",ledger.observe_tool_call)
     if not headless_worker and policy.enabled("nervous"):ctx.register_hook("post_tool_call",nervous.post_tool_call)
+    if not headless_worker and policy.enabled("action_gate"):ctx.register_hook("post_tool_call",gate.post_tool_call)
     if policy.enabled("work_supervision") or (not headless_worker and (policy.enabled("nervous") or policy.enabled("assistant_loops"))):
         ctx.register_hook("pre_llm_call",_pre_llm)
     if policy.enabled("work_supervision") or (not headless_worker and policy.enabled("nervous")):
@@ -578,6 +743,34 @@ def _register_profile(ctx):
             logger.warning("Nerve profile %s enables Shared Context but HermesContextBus is not installed for this Hermes home",policy.profile)
 
     logger.info("Nerve %s loaded; profile=%s tools=%d headless_worker=%s",VERSION,policy.profile,0 if headless_worker else len(registrations),headless_worker)
+    # Bounded, secret-free binding diagnostic: records only presence booleans and
+    # resolved gate states. Never writes claim-lock/run-id VALUES or credentials.
+    # Enabled only when HERMES_NERVE_BIND_DIAG names an output path.
+    _diag_path = str(os.getenv("HERMES_NERVE_BIND_DIAG") or "").strip()
+    if _diag_path:
+        try:
+            import json as _json
+            _rec = {
+                "version": VERSION,
+                "resolved_profile": getattr(policy, "profile", None),
+                "session_profile": str(os.getenv("HERMES_PROFILE") or ""),
+                "hermes_home": str(os.getenv("HERMES_HOME") or ""),
+                "nerve_settings_work_supervision": None,
+                "kanban_task_present": bool(str(os.getenv("HERMES_KANBAN_TASK") or os.getenv("HERMES_KANBAN_TASK_ID") or "").strip()),
+                "kanban_run_id_present": bool(str(os.getenv("HERMES_KANBAN_RUN_ID") or "").strip()),
+                "claim_lock_present": bool(str(os.getenv("HERMES_KANBAN_CLAIM_LOCK") or os.getenv("HERMES_KANBAN_CLAIM_IDENTITY") or "").strip()),
+                "headless_worker": bool(headless_worker),
+                "policy_work_supervision": bool(policy.enabled("work_supervision")),
+                "work_runtime_enabled": bool(work_runtime.enabled()),
+                "startup_identity_defined": "startup_identity" in locals(),
+                "startup_identity_bound": locals().get("startup_identity") is not None,
+                "supervision_db": str(os.getenv("HERMES_NERVE_SUPERVISION_DB") or ""),
+            }
+            _rec["nerve_settings_work_supervision"] = ctx.get_config("work_supervision_enabled", None)
+            with open(_diag_path, "a", encoding="utf-8") as _fh:
+                _fh.write(_json.dumps(_rec, sort_keys=True) + "\n")
+        except Exception:
+            pass
     if headless_worker and startup_identity is None and policy.enabled("work_supervision"):
         message="Nerve headless supervision did not bind at startup; inspect supervision_diagnostics before treating this run as a valid Nerve-supervised measurement"
         if os.getenv("HERMES_NERVE_OFFLINE_VERIFY")=="1":logger.info("%s (offline verifier: not applicable)",message)

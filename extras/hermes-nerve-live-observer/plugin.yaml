@@ -1,0 +1,9 @@
+manifest_version: 2
+api_version: 1
+name: hermes-nerve-live-observer
+version: "0.1.0-staging"
+description: "Observe-only, opt-in (HERMES_NERVE_LIVE_ENABLED=1) Nerve live telemetry writer. Stdlib only. Allowlisted metadata, HMAC-hashed IDs, capped per-PID JSONL, heartbeat leases."
+kind: standalone
+provides_hooks: [on_session_start, on_session_end, post_tool_call, post_api_request, api_request_error, subagent_start, subagent_stop]
+license: MIT
+tags: [hermes, nerve, telemetry, observer, staging]

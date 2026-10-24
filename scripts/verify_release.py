@@ -17,15 +17,14 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
  sys.path.insert(0,str(ROOT))
-EXPECTED="0.3.2.dev0"
-CATALOG_EXPECTED="0.3.0"
+EXPECTED="0.4.14"
 EXPECTED_TOOLS={
  "nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_stats","nerve_nervous_event",
  "nerve_supervise_card","nerve_work_event","nerve_work_status","nerve_remote_delegate_task","nerve_remote_worker_status","nerve_remote_worker_result","nerve_remote_worker_cancel","nerve_remote_worker_control",
 }
 EXPECTED_HOOKS={"pre_tool_call","post_tool_call","pre_llm_call","transform_tool_result","pre_verify","post_api_request","api_request_error","post_llm_call","on_session_end"}
-PROFILE_FAT_CAT_TOOLS={"nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_stats","nerve_nervous_event","nerve_supervise_card","nerve_work_event","nerve_work_status"}
-PROFILE_OPERATOR_TOOLS={"nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_stats","nerve_nervous_event"}
+PROFILE_FAT_CAT_TOOLS={"nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_context_explain","nerve_stats","nerve_nervous_event","nerve_supervise_card","nerve_work_event","nerve_work_status"}
+PROFILE_OPERATOR_TOOLS={"nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate","nerve_context_explain","nerve_stats","nerve_nervous_event"}
 PROFILE_MARIE_KONDO_TOOLS={"nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_stats","nerve_supervise_card","nerve_work_event","nerve_work_status"}
 PROFILE_LEAN_TOOLS={"nerve_decide","nerve_stats","nerve_nervous_event","nerve_supervise_card","nerve_work_event","nerve_work_status"}
 
@@ -42,33 +41,65 @@ def plugin_version():
 def catalog_version():
  text=(ROOT/"packaging/hermes-catalog/nerve.yaml").read_text();m=re.search(r'^version:\s*["\']?([^"\'\s]+)',text,re.M);assert m;return m.group(1)
 
+def resolve_package_version(py):
+    """Resolve the package version, honoring a pyproject dynamic version declaration."""
+    if "version" in py["project"].get("dynamic",[]):
+        attr_path=py["tool"]["setuptools"]["dynamic"]["version"]["attr"]
+        module_path,attr_name=attr_path.rsplit(".",1)
+        version_mod=__import__(module_path,fromlist=[attr_name])
+        return getattr(version_mod,attr_name)
+    return py["project"]["version"]
+
+def check_versions(py,expected):
+    """Assert every release-identity source agrees with expected; return the resolved version."""
+    package_version=resolve_package_version(py)
+    assert package_version==expected,("pyproject version",package_version,expected)
+    assert plugin_version()==expected,("plugin.yaml version",plugin_version(),expected)
+    import hermes_nerve.provenance as provenance
+    assert provenance.VERSION==expected,("provenance VERSION",provenance.VERSION,expected)
+    assert catalog_version()==expected,("catalog.yaml version",catalog_version(),expected)
+    return package_version
+
 def main():
+ # Registration or an assertion may fail before the inner headless checks.
+ # Restore caller identity/environment on every exit, preserving the failure.
+ keys=("HERMES_HOME","HERMES_KANBAN_TASK","HERMES_KANBAN_TASK_ID",
+       "HERMES_KANBAN_RUN_ID","HERMES_KANBAN_CLAIM_LOCK","HERMES_NERVE_OFFLINE_VERIFY")
+ original={key:os.environ.get(key) for key in keys}
+ try:
+  return _verify_release_checks()
+ finally:
+  for key,value in original.items():
+   if value is None: os.environ.pop(key,None)
+   else: os.environ[key]=value
+
+def _verify_release_checks():
  py=tomllib.loads((ROOT/"pyproject.toml").read_text())
- assert py["project"]["version"]==EXPECTED
- assert plugin_version()==EXPECTED
- from hermes_nerve.provenance import VERSION
- assert VERSION==EXPECTED
- assert catalog_version()==CATALOG_EXPECTED, (catalog_version(), CATALOG_EXPECTED)
+ package_version=check_versions(py,EXPECTED)
  assert py["project"]["dependencies"]==[],"core plugin must remain dependency-free"
- assert py["project"]["optional-dependencies"]["laya"]==["laya==0.3.3"]
+ assert py["project"]["optional-dependencies"]["laya"]==["laya==0.3.29"]
  from hermes_nerve.cli import _advanced_catalog
  init_text=(ROOT/"__init__.py").read_text()
  profile_block=init_text[init_text.index("def _register_profile(ctx):"):init_text.index("\ndef register(ctx):",init_text.index("def _register_profile(ctx):"))]
- registration_keys=set(re.findall(r'get\("([a-zA-Z0-9_]+)"',profile_block))
+ registration_keys=set(re.findall(r'(?<!\.)get\("([a-zA-Z0-9_]+)"',profile_block))
  catalog_keys=set(_advanced_catalog())
  assert registration_keys<=catalog_keys,("advanced catalog missing profile-registration keys",sorted(registration_keys-catalog_keys))
- for rel in ("hermes_nerve/reflex/laya.py","hermes_nerve/reflex/openjev.py","hermes_nerve/reflex/shadow.py","hermes_nerve/reflex/laya_service.py","tests/test_reflex_laya_dev15b.py","tests/test_reflex_openjev_dev17.py","tests/test_dev15_controller_completion.py","docs/DEV15B_LAYA_INTEGRATION.md","docs/DEV16_INSTALL_AND_RETEST.md","docs/DEV17_OPEN_SOURCE_VALIDATION.md","scripts/install_dev15_profile.sh","scripts/verify_dev15.sh","scripts/install_dev16_profile.sh","scripts/verify_dev16.sh","scripts/install_dev17_profile.sh","scripts/verify_dev17.sh","scripts/check_laya_sidecar.py","scripts/check_openjev_sidecar.py","scripts/configure_reflex_profile.py","scripts/setup_laya_dev17.sh","scripts/setup_openjev_dev17.sh","scripts/run_dev17_model_matrix.py","tests/test_dev17_matrix_qol.py","tests/test_dev16_nerve_budget.py","hermes_nerve/work/nerve.py","docs/DEV16_SESSION_FINDINGS.md","scripts/verify_dev6_benchmark.py","benchmarks/dev6_event_delivery/task-body.md","benchmarks/dev6_event_delivery/fixture/tests/test_delivery.py","benchmarks/dev6_event_delivery/hidden_acceptance.py"):
+ for rel in ("hermes_nerve/reflex/laya.py","hermes_nerve/reflex/openjev.py","hermes_nerve/reflex/systemone.py","hermes_nerve/reflex/shadow.py","hermes_nerve/reflex/laya_service.py","tests/test_reflex_laya_dev15b.py","tests/test_reflex_openjev_dev17.py","tests/test_reflex_systemone_d1.py","tests/test_dev15_controller_completion.py","docs/DEV15B_LAYA_INTEGRATION.md","docs/DEV16_INSTALL_AND_RETEST.md","docs/DEV17_OPEN_SOURCE_VALIDATION.md","scripts/install_dev15_profile.sh","scripts/verify_dev15.sh","scripts/install_dev16_profile.sh","scripts/verify_dev16.sh","scripts/install_dev17_profile.sh","scripts/verify_dev17.sh","scripts/check_laya_sidecar.py","scripts/check_openjev_sidecar.py","scripts/check_systemone_sidecar.py","scripts/configure_reflex_profile.py","scripts/setup_laya_dev17.sh","scripts/setup_openjev_dev17.sh","scripts/run_dev17_model_matrix.py","tests/test_dev17_matrix_qol.py","tests/test_dev16_nerve_budget.py","hermes_nerve/work/nerve.py","docs/DEV16_SESSION_FINDINGS.md","scripts/verify_dev6_benchmark.py","benchmarks/dev6_event_delivery/task-body.md","benchmarks/dev6_event_delivery/fixture/tests/test_delivery.py","benchmarks/dev6_event_delivery/hidden_acceptance.py"):
   assert (ROOT/rel).exists(),rel
  from hermes_nerve.reflex import config as reflex_config
  reflex_config.configure(backend="laya",laya_base_url="http://127.0.0.1:8765",laya_model="convaiinnovations/laya-typed-decisions")
  cfg=reflex_config.settings();assert cfg["backend"]=="laya";assert cfg["laya_model"]=="convaiinnovations/laya-typed-decisions";assert "laya_token" not in cfg
  reflex_config.configure(backend="openjev",openjev_base_url="http://127.0.0.1:3000",openjev_model="openjev")
  cfg=reflex_config.settings();assert cfg["backend"]=="openjev";assert cfg["openjev_model"]=="openjev";assert "openjev_token" not in cfg
+ reflex_config.configure(backend="systemone",systemone_base_url="http://127.0.0.1:8080",systemone_model="local-decision")
+ cfg=reflex_config.settings();assert cfg["backend"]=="systemone";assert cfg["systemone_model"]=="local-decision";assert "systemone_token" not in cfg
+ reflex_config.configure(backend="d1",d1_base_url="http://127.0.0.1:8080",d1_model="LiquidAI/d1-3B")
+ cfg=reflex_config.settings();assert cfg["backend"]=="d1";assert cfg["d1_model"]=="LiquidAI/d1-3B";assert "d1_token" not in cfg
  reflex_config.configure(backend="jev")
  with tempfile.TemporaryDirectory() as t:
   td=Path(t)
-  inherited_kanban={k:os.environ.get(k) for k in ("HERMES_KANBAN_TASK","HERMES_KANBAN_TASK_ID","HERMES_KANBAN_RUN_ID","HERMES_KANBAN_CLAIM_LOCK")}
-  os.environ["HERMES_KANBAN_TASK"]="";os.environ["HERMES_KANBAN_TASK_ID"]=""
+  inherited_kanban={k:os.environ.get(k) for k in ("HERMES_HOME","HERMES_KANBAN_TASK","HERMES_KANBAN_TASK_ID","HERMES_KANBAN_RUN_ID","HERMES_KANBAN_CLAIM_LOCK")}
+  os.environ["HERMES_HOME"]=str(td);os.environ["HERMES_KANBAN_TASK"]="";os.environ["HERMES_KANBAN_TASK_ID"]=""
   spec=importlib.util.spec_from_file_location("hermes_nerve_plugin_verify",ROOT/"__init__.py",submodule_search_locations=[str(ROOT)]);mod=importlib.util.module_from_spec(spec);sys.modules[spec.name]=mod;spec.loader.exec_module(mod);ctx=Ctx(td);mod.register(ctx)
   assert set(ctx.tools)==EXPECTED_TOOLS,(set(ctx.tools)^EXPECTED_TOOLS)
   assert set(ctx.hooks)==EXPECTED_HOOKS,(ctx.hooks,EXPECTED_HOOKS)
@@ -91,7 +122,7 @@ def main():
    os.environ["HERMES_KANBAN_TASK"]="verify-headless";os.environ["HERMES_KANBAN_RUN_ID"]="1";os.environ["HERMES_KANBAN_CLAIM_LOCK"]="claim";os.environ["HERMES_NERVE_OFFLINE_VERIFY"]="1"
    hctx=Ctx(td);mod.register(hctx);assert hctx.tools==[],hctx.tools;assert set(hctx.hooks)==EXPECTED_HOOKS
   finally:
-   for k,v in inherited_kanban.items():
+   for k,v in {**old_env,**inherited_kanban}.items():
     if v is None: os.environ.pop(k,None)
     else: os.environ[k]=v
   from hermes_nerve.work.store import SupervisionStore
@@ -101,6 +132,6 @@ def main():
  from hermes_nerve.work import runtime as work_runtime
  work_runtime.configure(enabled=True, completion_controller_attempts=3)
  assert work_runtime.settings()["completion_controller_attempts"]==3
- print(f"PASS version={EXPECTED} legacy_tools={len(EXPECTED_TOOLS)} fat_cat_tools={len(PROFILE_FAT_CAT_TOOLS)} operator_tools={len(PROFILE_OPERATOR_TOOLS)} lean_tools={len(PROFILE_LEAN_TOOLS)} marie_kondo_tools={len(PROFILE_MARIE_KONDO_TOOLS)} hook_names={len(EXPECTED_HOOKS)} catalog_version={catalog_version()} profiles=REGISTERED_AND_ASSERTED single_authority=PASS controller_completion=PASS reflex_laya=PASS reflex_openjev=PASS")
+ print(f"PASS version={package_version} legacy_tools={len(EXPECTED_TOOLS)} fat_cat_tools={len(PROFILE_FAT_CAT_TOOLS)} operator_tools={len(PROFILE_OPERATOR_TOOLS)} lean_tools={len(PROFILE_LEAN_TOOLS)} marie_kondo_tools={len(PROFILE_MARIE_KONDO_TOOLS)} hook_names={len(EXPECTED_HOOKS)} catalog_version={catalog_version()} profiles=REGISTERED_AND_ASSERTED single_authority=PASS controller_completion=PASS reflex_laya=PASS reflex_openjev=PASS reflex_systemone=PASS reflex_d1=PASS")
  return 0
 if __name__=="__main__":raise SystemExit(main())

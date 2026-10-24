@@ -1,0 +1,23 @@
+# Nerve protected system locations (policy data, auditable).
+#
+# A path is protected when it equals an entry or lies beneath one using the
+# caller's boundary suffix (see hermes_nerve.risk._protected_system_match).
+# These locations can never define an authorized project scope and their
+# reads are sensitive. One entry per line; blank lines and #-comments are
+# ignored. Loaded once at import; a missing, empty, or duplicate-entry
+# table fails the import loudly instead of weakening the policy.
+# One entry per line, in the original policy order:
+/etc/ssh
+/etc/sudoers
+/etc/cron
+/etc/shadow
+/etc/gshadow
+/etc/ssl/private
+/etc/openvpn
+/etc/wireguard
+/etc/systemd/system
+/etc/init.d
+/etc/rc
+/etc/ld.so.preload
+/etc/pam.d
+/root

@@ -1,5 +1,5 @@
 name: nerve
-version: "0.3.2.dev0"
+version: "0.4.14"
 description: "Nerve supervisory nervous system for Hermes Agent with Jev, Laya, and OpenJev Reflex backends, evidence-backed Kanban supervision, token-budget trajectory control, context governance, and durable SSH Hermes workers."
 author: "KeelTrace community"
 license: MIT
@@ -12,6 +12,7 @@ provides_tools:
   - nerve_assess
   - nerve_context_curate
   - nerve_context_rehydrate
+  - nerve_context_explain
   - nerve_stats
   - nerve_nervous_event
   - nerve_supervise_card
@@ -27,17 +28,32 @@ requires_env: []
 config_schema:
   nerve_profile: {type: str, default: "", description: "Optional Nerve personality: fat_cat, operator, lean, marie_kondo, or custom. Empty preserves v0.2.3 legacy behavior."}
   nerve_modules: {type: dict, default: {}, description: "Explicit per-module boolean overrides layered on the selected Nerve personality."}
+  selective_context_enabled: {type: bool, default: true, description: "Enable provider-neutral selective context planning."}
+  selective_context_memory_mode: {type: str, default: "shadow", description: "off, shadow, or apply for memory admission."}
+  selective_context_tools_mode: {type: str, default: "shadow", description: "off, shadow, or apply for tool HOT/DEFER planning."}
+  selective_context_skills_mode: {type: str, default: "shadow", description: "off, shadow, or apply for skill PIN/DISCOVER planning."}
+  selective_context_memory_max_candidates: {type: int, default: 24}
+  selective_context_memory_max_admitted: {type: int, default: 8}
+  selective_context_tools_max_candidates: {type: int, default: 128}
+  selective_context_tools_max_admitted: {type: int, default: 16}
+  selective_context_skills_max_candidates: {type: int, default: 128}
+  selective_context_skills_max_admitted: {type: int, default: 5}
+  selective_context_mandatory_skills: {type: list, default: [], description: "Plugin-relative settings list of skill names whose descriptions must remain in the index."}
+  selective_context_pinned_skills: {type: list, default: [], description: "Operator-pinned skill descriptions; auto-loaded full bodies remain unchanged in core."}
+  selective_context_lease_enabled: {type: bool, default: true}
+  selective_context_lease_max_age_seconds: {type: int, default: 3600}
+  selective_context_semantic_enabled: {type: bool, default: false, description: "Optional bounded semantic reranker; deterministic provider-free admission remains the default."}
   assistant_review_min_confidence: {type: float, default: 0.75}
   assistant_audit_min_confidence: {type: float, default: 0.70}
   assistant_prompt_max_chars: {type: int, default: 4000}
   assistant_provider_max_chars: {type: int, default: 6000}
-  model_id: {type: str, default: "typesafe/jev-1.13", description: "Legacy model alias used only as the fallback for jev_model."}
-  jev_provider: {type: str, default: "openrouter"}
-  jev_model: {type: str, default: "typesafe/jev-1.13"}
-  typesafe_model: {type: str, default: "jev-latest"}
+  model_id: {type: str, default: "typesafe/jev-1.14", description: "Legacy model alias used only as the fallback for jev_model."}
+  jev_provider: {type: str, default: ""}
+  jev_model: {type: str, default: "typesafe/jev-1.14"}
+  typesafe_model: {type: str, default: "jev-1.14.0"}
   opencode_model: {type: str, default: "jev-1.13"}
   timeout_seconds: {type: float, default: 10.0}
-  reflex_backend: {type: str, default: "jev", description: "Decision backend: jev, laya, openjev, or shadow."}
+  reflex_backend: {type: str, default: "jev", description: "Decision backend: jev, laya, openjev, systemone, d1, or shadow."}
   reflex_laya_base_url: {type: str, default: "http://127.0.0.1:8765", description: "Laya sidecar base URL. Loopback HTTP or HTTPS only."}
   reflex_laya_model: {type: str, default: "convaiinnovations/laya-typed-decisions", description: "Expected fixed Laya checkpoint identity exposed by the sidecar."}
   reflex_laya_timeout_seconds: {type: float, default: 5.0, description: "Laya sidecar request timeout."}
@@ -47,17 +63,34 @@ config_schema:
   reflex_openjev_timeout_seconds: {type: float, default: 10.0, description: "OpenJev helper request timeout."}
   reflex_openjev_token: {type: str, default: "", description: "Optional SHIM_TOKEN bearer token for the OpenJev helper."}
   reflex_openjev_expected_identity: {type: str, default: "", description: "Optional substring pin for OpenJev /v1/version and response model identity."}
-  reflex_shadow_backend: {type: str, default: "laya", description: "Open-source backend used when reflex_backend=shadow: laya or openjev."}
+  reflex_systemone_base_url: {type: str, default: "http://127.0.0.1:8080", description: "Generic Jev-compatible System One server base URL. Loopback HTTP or HTTPS only."}
+  reflex_systemone_path: {type: str, default: "/v1/systemone", description: "Generic System One endpoint path."}
+  reflex_systemone_model: {type: str, default: "", description: "Optional request model label for the generic System One server; blank omits model."}
+  reflex_systemone_timeout_seconds: {type: float, default: 5.0, description: "Generic System One request timeout."}
+  reflex_systemone_token: {type: str, default: "", description: "Optional bearer token for the generic System One server."}
+  reflex_systemone_provider: {type: str, default: "SystemOne", description: "Provider label used when the generic server response omits one."}
+  reflex_systemone_expected_identity: {type: str, default: "", description: "Optional substring pin for the generic System One response model identity."}
+  reflex_d1_base_url: {type: str, default: "http://127.0.0.1:8080", description: "Liquid D1 / llama.cpp System One server base URL. Loopback HTTP or HTTPS only."}
+  reflex_d1_path: {type: str, default: "/v1/systemone", description: "Liquid D1 System One endpoint path."}
+  reflex_d1_model: {type: str, default: "LiquidAI/d1-3B", description: "Request model label for the Liquid d1-3B preset."}
+  reflex_d1_timeout_seconds: {type: float, default: 5.0, description: "Liquid D1 local request timeout."}
+  reflex_d1_token: {type: str, default: "", description: "Optional bearer token for the D1 System One server."}
+  reflex_d1_expected_identity: {type: str, default: "", description: "Optional substring pin for the D1 response model identity."}
+  reflex_shadow_backend: {type: str, default: "laya", description: "Open-source backend used when reflex_backend=shadow: laya, openjev, systemone, or d1."}
   reflex_shadow_async: {type: bool, default: true, description: "Run the selected open-source shadow request asynchronously so Jev latency remains authoritative."}
   reflex_shadow_log: {type: str, default: "", description: "Optional paired Jev/open-source shadow JSONL path."}
   gate_mode: {type: str, default: "off", description: "off, advisory (log only), enforce (approve/block/approve), or ask-only (enforce without hard blocks: BLOCK verdicts escalate to human approval)."}
   gate_scope: {type: str, default: "selective"}
+  gate_risk_preflight: {type: bool, default: true, description: "HITL v2: deterministic risk classification runs before the decision model; recognized safe/project calls execute automatically."}
+  gate_learned_preferences: {type: bool, default: true, description: "HITL v2: learn operator-approved exact command shapes (uncertain band only) and auto-allow repeats."}
+  gate_preference_min_samples: {type: int, default: 2, description: "HITL v2: approvals of the exact same shape required before learned auto-allow engages."}
   min_confidence: {type: float, default: 0.80}
   min_allow_probability: {type: float, default: 0.90, description: "Enforce/ask-only mode: minimum p(ALLOW) for an ALLOW verdict to continue without a human."}
   receipt_detail: {type: str, default: "hash"}
   nervous_enabled: {type: bool, default: true}
   nervous_turn_admission: {type: bool, default: true}
   nervous_mode: {type: str, default: "correct_next"}
+  nervous_admission_risk_floor: {type: bool, default: true}
   nervous_challenge_confidence: {type: float, default: 0.86}
   nervous_call_threshold: {type: float, default: 0.58}
   nervous_max_provider_calls_per_turn: {type: int, default: 96}
@@ -67,6 +100,9 @@ config_schema:
   nervous_local_learning: {type: bool, default: true}
   nervous_local_learning_min_samples: {type: int, default: 8}
   nervous_repeated_failure_local_replan_at: {type: int, default: 3}
+  nervous_policy_memory_enabled: {type: bool, default: true, description: "Remember only runtime-wide unattended tool-policy blocks and reject them before execution."}
+  nervous_policy_memory_ttl_seconds: {type: int, default: 3600, description: "TTL for runtime-wide tool-policy memory; runtime mode/config changes invalidate entries independently."}
+  nervous_policy_memory_path: {type: str, default: "", description: "Optional policy-memory JSONL path; defaults to the active Hermes profile nerve directory."}
   context_ledger_enabled: {type: bool, default: true}
   context_ledger_detail: {type: str, default: "sanitized"}
   context_preview_chars: {type: int, default: 1200}

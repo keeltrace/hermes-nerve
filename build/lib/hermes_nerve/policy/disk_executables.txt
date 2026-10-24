@@ -1,0 +1,21 @@
+# Nerve disk-level executable command names (policy data, auditable).
+#
+# Any one of these commands classifies as a PROHIBITED disk-level operation
+# (see hermes_nerve.risk._is_disk_executable and classify_segment's
+# "Disk-level operation" branch). Exact case-sensitive name match.
+# One entry per line; blank lines and #-comments are ignored. Loaded once
+# at import; a missing, empty, or duplicate-entry table fails the import
+# loudly instead of weakening the policy.
+dd
+mkfs
+mkfs.ext4
+mkfs.xfs
+mkfs.btrfs
+newfs
+fdisk
+parted
+gparted
+sfdisk
+cfdisk
+blkdiscard
+wipefs

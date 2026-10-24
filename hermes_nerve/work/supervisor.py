@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..engine import DecisionEngine
+from .. import experience
 from ..paths import hermes_home
 from ..privacy import canonical_hash, redact
 from . import trajectory as trajectory_logic
@@ -316,15 +317,41 @@ class CardSupervisor:
         state = "VERIFIED_PASS" if value == "PASS" else "FAIL" if value in {"RETRY", "REPLAN"} else "NEEDS_EVIDENCE"
         reason = f"Reflex criterion verdict {value}."
         receipt_id = str(getattr(result, "receipt_id", "") or "")
+        evidence_ids = [str(e["evidence_id"]) for e in evidence]
         self.store.save_verdict(
             identity,
             criterion_id=criterion_id,
             state=state,
             reason=reason,
             receipt_id=receipt_id,
-            evidence_ids=[str(e["evidence_id"]) for e in evidence],
+            evidence_ids=evidence_ids,
             created_at=utc_now(),
         )
+        if experience.enabled() and state == "VERIFIED_PASS":
+            try:
+                experience.default_store().create_claim(
+                    subject=f"dod:{identity.task_id}:{criterion_id}",
+                    statement=criterion.description,
+                    claim_type="verified",
+                    evidence_ids=evidence_ids,
+                    confidence=float(getattr(result, "confidence", 0.0) or 0.0),
+                    polarity=1,
+                    scope={"worker": identity.worker_id or ""},
+                    last_verified=utc_now(),
+                    provenance={
+                        "task_id": identity.task_id,
+                        "run_id": identity.run_id,
+                        "contract_hash": identity.contract_hash,
+                        "criterion_id": criterion_id,
+                        "receipt_id": receipt_id,
+                        "verifier": "reflex",
+                    },
+                    estimated_tokens=int(getattr(criterion, "estimated_tokens", 0) or 0),
+                    tags=["dod", "verified-criterion"],
+                    expected_reuse=0.75,
+                )
+            except Exception:
+                pass
         return {
             "state": state,
             "value": value,
@@ -343,7 +370,8 @@ class CardSupervisor:
         evidence_ids: list[str] | None = None,
     ) -> None:
         contract = self._contract_for_identity(identity)
-        if criterion_id not in {c.id for c in contract.criteria}:
+        criterion = next((c for c in contract.criteria if c.id == criterion_id), None)
+        if criterion is None:
             raise ValueError(f"unknown criterion_id {criterion_id!r}")
         self.store.save_verdict(
             identity,
@@ -354,6 +382,31 @@ class CardSupervisor:
             evidence_ids=list(evidence_ids or []),
             created_at=utc_now(),
         )
+        if experience.enabled() and passed and evidence_ids:
+            try:
+                experience.default_store().create_claim(
+                    subject=f"dod:{identity.task_id}:{criterion_id}",
+                    statement=criterion.description,
+                    claim_type="verified",
+                    evidence_ids=list(evidence_ids),
+                    confidence=1.0,
+                    polarity=1,
+                    scope={"worker": identity.worker_id or ""},
+                    last_verified=utc_now(),
+                    provenance={
+                        "task_id": identity.task_id,
+                        "run_id": identity.run_id,
+                        "contract_hash": identity.contract_hash,
+                        "criterion_id": criterion_id,
+                        "receipt_id": "deterministic",
+                        "verifier": "deterministic",
+                    },
+                    estimated_tokens=int(getattr(criterion, "estimated_tokens", 0) or 0),
+                    tags=["dod", "verified-criterion", "deterministic"],
+                    expected_reuse=0.85,
+                )
+            except Exception:
+                pass
 
     # --------------------------- completion ---------------------------
     def verify_completion(self, identity: RunIdentity, proposal: dict[str, Any] | None = None) -> CompletionVerdict:
@@ -572,6 +625,43 @@ class CardSupervisor:
         )
         payload = packet.as_dict()
         self.store.save_checkpoint(payload)
+        if experience.enabled():
+            try:
+                run_events = self.store.events(identity.task_id, run_id=identity.run_id, include_stale=False)
+                failed_paths = [
+                    {
+                        "event_id": row.get("event_id"),
+                        "event_type": row.get("event_type"),
+                        "criterion_id": row.get("criterion_id"),
+                        "payload": row.get("payload") or {},
+                    }
+                    for row in run_events
+                    if row.get("event_type") in {"CRITERION_FAILED", "BLOCKER_FOUND", "TEST_FAILED"}
+                ][-12:]
+                discoveries = [
+                    {
+                        "event_id": row.get("event_id"),
+                        "event_type": row.get("event_type"),
+                        "criterion_id": row.get("criterion_id"),
+                        "payload": row.get("payload") or {},
+                    }
+                    for row in run_events
+                    if row.get("event_type") in {"PLAN_CHANGED", "ARTIFACT_CREATED", "TEST_PASSED"}
+                ][-12:]
+                evidence_ids = [str(row.get("evidence_id")) for row in self.store.evidence(identity) if row.get("evidence_id")]
+                experience.default_store().create_capsule(
+                    payload,
+                    failed_paths=failed_paths,
+                    discoveries=discoveries,
+                    evidence_ids=evidence_ids,
+                    next_move="" if complete else (current_plan or (packet.frontier[0] if packet.frontier else "")),
+                    summary=reason,
+                    scope={"worker": identity.worker_id or ""},
+                )
+            except Exception:
+                # Experience is advisory. Failure to preserve a capsule must never
+                # alter canonical work supervision or checkpoint authority.
+                pass
         if complete and self.store.is_current(identity):
             try:
                 self.store.acknowledge_control(identity)
@@ -598,7 +688,7 @@ class CardSupervisor:
             return {"supervised": False, "task_id": task_id}
         identity = self.store.current_identity(task_id)
         projection = project(self.store, contract, identity)
-        return {
+        result = {
             "supervised": True,
             "contract": contract.as_dict(),
             "identity": identity.as_dict() if identity else None,
@@ -610,6 +700,12 @@ class CardSupervisor:
             "economics": self.economics(identity) if identity else None,
             "nerve": self.nerve_status(identity) if identity else None,
         }
+        if experience.enabled():
+            try:
+                result["experience_capsules"] = experience.default_store().capsules(task_id=task_id, limit=3)
+            except Exception:
+                result["experience_capsules"] = []
+        return result
 
     def nerve_status(self, identity: RunIdentity) -> dict[str, Any]:
         from .nerve import evaluate

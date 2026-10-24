@@ -1,0 +1,18 @@
+/* Nerve Operator University styles (CSP: external asset) */
+ body{font-family:system-ui,sans-serif;margin:0;background:#101418;color:#e8eaed}
+ header{padding:12px 16px;background:#161b22;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+ header h1{font-size:1.1rem;margin:0}
+ nav{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px}
+ nav button{background:#1f2730;color:#e8eaed;border:1px solid #30363d;border-radius:6px;padding:6px 10px;cursor:pointer}
+ nav button.active{background:#2f81f7;border-color:#2f81f7}
+ main{max-width:52rem;margin:0 auto;padding:12px 16px}
+ .lesson{border:1px solid #30363d;border-radius:8px;padding:10px 14px;margin:10px 0}
+ .lesson h3{margin:4px 0}
+ .lab{background:#141a20;border:1px dashed #3d444d;border-radius:8px;padding:10px 14px;margin:10px 0}
+ pre{white-space:pre-wrap;background:#0d1117;padding:8px;border-radius:6px;overflow-x:auto}
+ input,button,textarea{font-size:1rem}
+ input,textarea{background:#0d1117;color:#e8eaed;border:1px solid #30363d;border-radius:6px;padding:6px}
+ input{width:60%} textarea{width:95%;min-height:4rem}
+ .ok{color:#3fb950}.bad{color:#f85149}
+ :focus-visible{outline:2px solid #2f81f7}
+ @media(max-width:640px){nav button{padding:8px}input{width:90%}}

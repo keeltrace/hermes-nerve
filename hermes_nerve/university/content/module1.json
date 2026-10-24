@@ -1,0 +1,121 @@
+{
+ "id": "1",
+ "title": "Hermes and Nerve Foundations",
+ "summary": "What Hermes is, what Nerve adds, and where authority lives",
+ "lessons": [
+  {
+   "title": "What Hermes owns",
+   "body": "Hermes is the agent runtime: model providers, tools, sessions, approvals, and the Kanban board are Hermes-owned surfaces. Nerve never replaces them; it observes and advises."
+  },
+  {
+   "title": "What Nerve adds",
+   "body": "Nerve is a supervisory nervous system: risk-aware HITL gating, verified experience, selective context, Reflex providers, work supervision, profiles, a control panel, and the university."
+  },
+  {
+   "title": "Authority rules",
+   "body": "Canonical truth (task state, completion, config) always lives in Hermes. Nerve components may advise, gate, or annotate - they never overwrite Hermes authority."
+  }
+ ],
+ "lab": {
+  "goal": "Identify which surface owns each of: task completion, tool approval, provider selection, experience notes.",
+  "steps": [
+   "Create a disposable sandbox: export HERMES_HOME=/tmp/uni-lab-1 && mkdir -p $HERMES_HOME",
+   "Run: hermes --version  (observe the install directory line)",
+   "List the sandbox: ls $HERMES_HOME  (note it is empty until Hermes initializes it)"
+  ],
+  "expect": "You can name the owner surface for each item without opening the code.",
+  "task": {
+   "intro": "Answer the scenario questions; the engine verifies them deterministically in a disposable fixture. Your answers are never executed as commands.",
+   "questions": [
+    {
+     "id": "q1",
+     "q": "Who owns canonical task completion? (hermes/nerve/operator)",
+     "any_of": [
+      "hermes"
+     ],
+     "why": "Hermes executes and owns canonical lifecycle; Nerve supervises."
+    },
+    {
+     "id": "q2",
+     "q": "Who approves consequential tool actions? (hermes/nerve/operator)",
+     "any_of": [
+      "operator"
+     ],
+     "why": "The operator owns policy and consequential decisions."
+    },
+    {
+     "id": "q3",
+     "q": "May Never bypass Hermes safeguards? (yes/no)",
+     "any_of": [
+      "no"
+     ],
+     "why": "Nerve advises and verifies but never bypasses Hermes security."
+    }
+   ]
+  },
+  "executable": {
+   "task": "Produce an ownership map assigning each surface to its rightful owner.",
+   "files": {
+    "ownership-map.json": {
+     "kind": "json",
+     "checks": [
+      {
+       "path": "owners.completion",
+       "expect": "equals",
+       "value": "hermes"
+      },
+      {
+       "path": "owners.approval",
+       "expect": "equals",
+       "value": "operator"
+      },
+      {
+       "path": "owners.notes",
+       "expect": "equals",
+       "value": "nerve"
+      }
+     ]
+    }
+   },
+   "solution": {
+    "files": {
+     "ownership-map.json": "{\"owners\": {\"completion\": \"hermes\", \"approval\": \"operator\", \"notes\": \"nerve\"}}"
+    }
+   }
+  }
+ },
+ "check": {
+  "question": "Q: Which component owns canonical task completion? (hermes/nerve/either)",
+  "expected_keywords": [
+   "hermes"
+  ],
+  "rubric": [
+   {
+    "id": "hermes_owns_completion",
+    "any_of": [
+     "hermes"
+    ]
+   },
+   {
+    "id": "nerve_advises_not_executes",
+    "any_of": [
+     "nerve",
+     "supervise",
+     "supervision"
+    ]
+   },
+   {
+    "id": "evidence_beats_assertion",
+    "any_of": [
+     "evidence",
+     "verified",
+     "proof"
+    ]
+   }
+  ]
+ },
+ "troubleshooting": [
+  "If a plugin claims to complete tasks directly, that is a Paperclip-style private integration, not core Nerve behavior.",
+  "Nerve's work module routes completion through Hermes' native dispatcher."
+ ]
+}

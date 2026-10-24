@@ -2,6 +2,8 @@
 
 Nerve v0.2.2.dev4 supports three System One transports behind one decision contract.
 
+If `jev_provider` is unset, Nerve uses OpenRouter, except when only `TYPESAFE_API_KEY` is configured, in which case it uses TypeSafe direct. If both keys exist, set `jev_provider` explicitly; an OpenRouter HTTP 402 includes a hint when a TypeSafe key is available.
+
 ## OpenRouter
 
 - Credential: `OPENROUTER_API_KEY`

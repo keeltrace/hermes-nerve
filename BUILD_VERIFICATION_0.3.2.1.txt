@@ -1,0 +1,109 @@
+Nerve v0.3.2.1 Build Verification
+====================================
+
+Date: 2026-10-04
+Branch: release/v0.3.2.1-selective-context
+Baseline: feature/v0.3.2-verified-experience (verified v0.3.2 source)
+
+Scope
+-----
+Focused Selective Context update:
+- provider-neutral memory/tool/skill admission contracts
+- PIN / ADMIT / DEFER / SUPPRESS decisions
+- task fingerprints and stable admission leases
+- deterministic relevance/trust/recency/token-cost scoring
+- fail-open behavior and mandatory-item protection
+- Verified Experience, Hermes tool-schema, and skill-metadata adapters
+- explicit shadow proposal vs effective-context semantics
+- bounded token accounting and nerve_stats selective_context telemetry
+- per-surface off/shadow/apply settings; shadow defaults
+- optional semantic reranker seam remains disabled by default
+- no new Nerve tool schemas; Hermes remains tool-execution authority
+
+Verification
+------------
+PASS python3 -m compileall -q .
+
+PASS Selective Context focused suite:
+  12/12
+
+PASS focused + plugin registration:
+  15/15 total after shadow-mode test addition
+  (12 Selective Context + 3 plugin registration)
+
+PASS v0.3.2 regression groups previously rerun during this build:
+  80/80
+  - Verified Experience
+  - module absence
+  - profile capability matrix
+  - nervous system
+  - work supervision
+
+PASS core:
+  52/52
+
+PASS full dependency-free test discovery:
+  351/351
+  Ran 351 tests in 6.735s
+  OK
+
+PASS offline release verifier:
+  version=0.3.2.1
+  legacy_tools=16
+  fat_cat_tools=12
+  operator_tools=9
+  lean_tools=6
+  marie_kondo_tools=8
+  hook_names=9
+  catalog_version=0.3.2.1
+  profiles=REGISTERED_AND_ASSERTED
+  single_authority=PASS
+  controller_completion=PASS
+  reflex_laya=PASS
+  reflex_openjev=PASS
+
+Known test-environment limitation
+---------------------------------
+UNVERIFIED in this sandbox only:
+  tests/test_settings_namespace.py
+
+Reason:
+  optional development dependency PyYAML is not installed in the isolated
+  execution sandbox (ModuleNotFoundError: yaml). This is the same class of
+  environment-only gap recorded in the v0.3.2 verification baseline. It is
+  excluded from the 351-test dependency-free run above; no failing assertion
+  from that module was observed.
+
+Attack / repair notes
+---------------------
+- A filesystem API full-file round trip was found to have a 50 KB write cap.
+  The affected test_core.py was restored from the public v0.3.1 source in
+  version-checked chunks, with the v0.3.2.1 version assertion reapplied.
+- Exact verification after repair: tests/test_core.py is 64,681 bytes,
+  1,212 lines, and its diff versus v0.3.2 is only the intended version
+  assertion.
+- A transport redactor temporarily altered two token-parameter identifiers in
+  __init__.py during an earlier edit. Both were restored exactly and
+  py_compile/plugin registration passed afterward.
+- Source-size reconciliation was performed for every modified tracked file;
+  no remaining truncation was detected.
+
+Runtime boundary
+----------------
+Hermes' current plugin hook surface does not provide a supported generic hook
+for rewriting the already-assembled provider tool-schema array. v0.3.2.1 does
+not monkey-patch Hermes. Tool and skill APPLY plans are adapter outputs intended
+for Hermes' existing progressive Tool Search / skill-discovery seams. Memory
+providers can map structured candidates through the same admission controller.
+
+Default runtime remains conservative:
+  memory_mode=shadow
+  tools_mode=shadow
+  skills_mode=shadow
+  semantic_enabled=false
+  lease_enabled=true
+
+Conclusion
+----------
+QUALIFIED for packaging as Nerve v0.3.2.1 Selective Context, subject to the
+explicit PyYAML-only test-environment limitation above.

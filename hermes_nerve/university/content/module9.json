@@ -1,0 +1,130 @@
+{
+ "id": "9",
+ "title": "Capstone: Build and Verify a Production-style Organization",
+ "summary": "Prove the whole system in a disposable environment",
+ "lessons": [
+  {
+   "title": "The task",
+   "body": "In a disposable HERMES_HOME, build a two-worker organization that completes a small verified deliverable (a doc set with a deterministic check), under Nerve supervision with HITL active."
+  },
+  {
+   "title": "Acceptance rubric",
+   "body": "1) Task completes via controller-owned dispatch. 2) At least one consequential prompt answered with justification. 3) Checkpoint capsule exists and resumes. 4) Experience notes record one verified claim. 5) No live profile touched."
+  },
+  {
+   "title": "Verification",
+   "body": "The capstone checker validates artifacts, gates, and isolation automatically; the rubric is in module 9 content."
+  }
+ ],
+ "lab": {
+  "goal": "Complete the capstone in a disposable environment and pass the automated checker.",
+  "steps": [
+   "Run: nerve university --capstone  (creates the disposable fixture)",
+   "Complete the deliverable inside the fixture.",
+   "Run: nerve university --capstone --verify  (produces evidence artifacts)"
+  ],
+  "expect": "Checker exits 0 with five evidence artifacts written under the fixture.",
+  "task": {
+   "intro": "Answer the scenario questions; the engine verifies them deterministically in a disposable fixture. Your answers are never executed as commands.",
+   "questions": [
+    {
+     "id": "q1",
+     "q": "Where must the capstone organization be built? (disposable/live)",
+     "any_of": [
+      "disposable",
+      "fixture",
+      "sandbox",
+      "isolated"
+     ],
+     "why": "The capstone runs only in a disposable environment."
+    },
+    {
+     "id": "q2",
+     "q": "Who creates the capstone deliverables? (learner/verifier)",
+     "any_of": [
+      "learner"
+     ],
+     "why": "The learner produces artifacts; the verifier only inspects them."
+    },
+    {
+     "id": "q3",
+     "q": "Should results include limitations truthfully? (yes/no)",
+     "any_of": [
+      "yes"
+     ],
+     "why": "Truthful reporting of result and limitations is mandatory."
+    }
+   ]
+  },
+  "executable": {
+   "task": "Produce the capstone operating plan before building the organization.",
+   "files": {
+    "capstone-plan.json": {
+     "kind": "json",
+     "checks": [
+      {
+       "path": "environment",
+       "expect": "equals",
+       "value": "disposable"
+      },
+      {
+       "path": "artifacts_creator",
+       "expect": "equals",
+       "value": "learner"
+      },
+      {
+       "path": "verifier_creates",
+       "expect": "equals",
+       "value": "nothing"
+      }
+     ]
+    }
+   },
+   "solution": {
+    "files": {
+     "capstone-plan.json": "{\"environment\": \"disposable\", \"artifacts_creator\": \"learner\", \"verifier_creates\": \"nothing\"}"
+    }
+   }
+  }
+ },
+ "check": {
+  "question": "Q: Where must the capstone be built?",
+  "expected_keywords": [
+   "in a disposable environment - never against a live installation"
+  ],
+  "rubric": [
+   {
+    "id": "disposable_env",
+    "any_of": [
+     "disposable",
+     "isolated",
+     "fixture",
+     "sandbox"
+    ]
+   },
+   {
+    "id": "verified_artifacts",
+    "any_of": [
+     "artifact",
+     "verif",
+     "evidence",
+     "dod"
+    ]
+   },
+   {
+    "id": "truthful_reporting",
+    "any_of": [
+     "truth",
+     "honest",
+     "limitation",
+     "report",
+     "rollback"
+    ]
+   }
+  ]
+ },
+ "troubleshooting": [
+  "Labs and capstone never write to live profiles.",
+  "The checker verifies isolation as part of acceptance."
+ ]
+}

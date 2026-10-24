@@ -118,6 +118,8 @@ class Dev7HeadlessBindingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             env = {
+                # Isolate profile resolution from the real ~/.hermes profile.
+                "HERMES_HOME": td,
                 "HERMES_KANBAN_TASK": Task.id,
                 "HERMES_KANBAN_RUN_ID": "42",
                 "HERMES_KANBAN_CLAIM_LOCK": "claim-42",

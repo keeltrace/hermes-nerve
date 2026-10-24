@@ -10,10 +10,21 @@ class ProfileMigrationTests(unittest.TestCase):
             r=resolve_config(get_config=lambda k,d=None:d, home=Path(td), profile=None)
         self.assertEqual(r.profile,"legacy"); self.assertTrue(r.enabled("work_supervision")); self.assertTrue(r.enabled("context_governor")); self.assertFalse(r.enabled("action_gate"))
 
-    def test_explicit_hermes_profile_does_not_inherit_different_sidecar_overrides(self):
+    def test_sidecar_profile_wins_and_stale_hermes_pin_is_reported(self):
+        # 0.4.13 config-repair: the sidecar document is what both supported
+        # writers (nerve setup, Control Panel) maintain, so it selects the
+        # profile, keeps its overrides/advanced, and any differing Hermes
+        # config.yaml nerve_profile is reported instead of silently winning.
         side={"version":1,"nerve_profile":"fat_cat","nerve_modules":{"assistant_loops":True,"context_governor":True},"advanced":{"gate_mode":"precommit"}}
         r=resolve_config(get_config=lambda k,d=None: "lean" if k=="nerve_profile" else d, profile=side)
-        self.assertEqual(r.profile,"lean"); self.assertFalse(r.enabled("assistant_loops")); self.assertFalse(r.enabled("context_governor")); self.assertEqual(r.advanced,{})
+        self.assertEqual(r.profile,"fat_cat"); self.assertTrue(r.enabled("assistant_loops")); self.assertTrue(r.enabled("context_governor")); self.assertEqual(r.advanced,{"gate_mode":"precommit"})
+        self.assertEqual(r.ignored_settings_profile,"lean")
+
+    def test_hermes_profile_applies_when_no_sidecar_exists(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as empty_home:
+            r=resolve_config(get_config=lambda k,d=None: "lean" if k=="nerve_profile" else d, profile=None, home=empty_home)
+            self.assertEqual(r.profile,"lean"); self.assertFalse(r.enabled("assistant_loops"))
 
     def test_corrupt_profile_recovers_backup_then_falls_back_legacy(self):
         with tempfile.TemporaryDirectory() as td:

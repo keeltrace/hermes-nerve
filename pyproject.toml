@@ -1,7 +1,7 @@
 [project]
 name = "hermes-nerve"
-version = "0.3.2.dev0"
-description = "Nerve supervisory nervous system for Hermes Agent with provider-neutral Jev/Laya/OpenJev Reflex backends, evidence-backed Kanban supervision, context governance, and SSH workers"
+dynamic = ["version"]
+description = "Nerve supervisory nervous system for Hermes Agent with provider-neutral System One Reflex backends, evidence-backed Kanban supervision, context governance, and SSH workers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -15,13 +15,22 @@ nerve = "hermes_nerve.cli:main"
 Homepage = "https://github.com/keeltrace/hermes-nerve"
 Issues = "https://github.com/keeltrace/hermes-nerve/issues"
 
+[tool.setuptools.dynamic]
+version = {attr = "hermes_nerve._version.__version__"}
+
 [tool.setuptools.packages.find]
 include = ["hermes_nerve*", "hermes_jev*"]
 exclude = ["tests*", "review*", "planning*", "contracts*", "packaging*"]
+
+[tool.setuptools.package-data]
+hermes_nerve = ["web/*.html", "web/*.css", "web/*.js", "university/content/*.json", "observatory/assets/*.css", "observatory/assets/*.js", "research/*.md", "policy/*.txt"]
+
+[tool.setuptools.data-files]
+"share/hermes-nerve" = ["plugin.yaml", "__init__.py", "CONTRIBUTORS.md", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [project.optional-dependencies]
-dev = ["PyYAML>=6,<7", "tomli>=2,<3; python_version < '3.11'"]
-laya = ["laya==0.3.3"]
+dev = ["PyYAML>=6,<7", "pytest>=8,<10", "tomli>=2,<3; python_version < '3.11'"]
+laya = ["laya==0.3.29"]

@@ -223,12 +223,17 @@ def ensure_kanban_binding(supervisor, *, task_id: str = "", session_id: str = ""
         return None
     # The dispatcher-pinned environment is canonical. Hook-local ``task_id``
     # values may be a session/subtask identifier on fallback lifecycle paths.
-    tid = str(os.getenv("HERMES_KANBAN_TASK_ID") or os.getenv("HERMES_KANBAN_TASK") or task_id or "").strip()
+    env_tid = str(os.getenv("HERMES_KANBAN_TASK_ID") or os.getenv("HERMES_KANBAN_TASK") or "").strip()
+    tid = env_tid or str(task_id or "").strip()
     if not tid:
         return None
     # Make the canonical worker env visible to the rest of the plugin even on
-    # Hermes builds that only set HERMES_KANBAN_TASK.
-    os.environ.setdefault("HERMES_KANBAN_TASK_ID", tid)
+    # Hermes builds that only set HERMES_KANBAN_TASK. Only propagate a
+    # dispatcher-pinned value: a hook-local fallback may be a session id on
+    # non-worker processes, and writing it back would make later reads treat
+    # it as canonical (issue #60).
+    if env_tid:
+        os.environ.setdefault("HERMES_KANBAN_TASK_ID", env_tid)
 
     # Read and fence against canonical Kanban state before creating any Jev
     # contract. A stale/reclaimed worker must not be able to lock a DoD for a

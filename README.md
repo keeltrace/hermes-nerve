@@ -1,9 +1,48 @@
 # Nerve
 
-> **Development status:** current `main` identifies as `0.3.2.dev0`. The latest stable release is `v0.3.1`, published from its reviewed release commit. `main` contains post-0.3.1 development work and is not the same tree as the stable release. Hermes catalog installs follow exact reviewed commit-SHA pins and may lag `main` until a catalog SHA-bump PR is reviewed and merged.
+## Current candidate: NOT RELEASE-READY
 
-Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.1` is the stable maintenance release for the profile-aware `0.3.0` line: it concentrates bug fixes, hardening, completion/retry integrity, configuration correctness, setup QOL, and the explicitly approved opt-in ask-only Action Gate while preserving v0.2.3-compatible Legacy behavior when no profile is selected. Other `0.3.2` feature work remains on the development line. Nerve/Reflex remains a watchdog and forecaster; the main Hermes orchestrator/reviewer owns final stop/continue authority. The core plugin remains dependency-free and model runtimes stay in sidecars.
+This development candidate is still undergoing local qualification. Native security validation currently rejects this candidate. Do not bypass that validation or install this candidate into a serving profile.
 
+Full-suite, installation/rollback, real-runtime and feature acceptance remain incomplete. Passing focused tests or successfully building a package does not establish release readiness. Installation and feature descriptions below are not a qualification certificate for the current candidate.
+
+Publication and production cutover require separate explicit owner authorization.
+
+### Community release support and limitations
+
+- A supported release must install and register its tools/hooks on an **unmodified Hermes version**. Private scanner patches are not a supported dependency, and bypassing native security validation is not an installation method.
+- The ordinary configuration/control-panel/decision path, backend-error behavior, approval handling, and disable/uninstall lifecycle require a real clean-profile smoke test. Unit tests, simulated installers, and an HTTP health response are not substitutes.
+- Optional Jev/Laya/OpenJev/System One/D1 and shadow integrations are **experimental until the particular backend and workflow have been exercised live**. Listing a configuration option or passing a mocked transport test does not certify that integration. Model downloads and hosted calls are opt-in, not release-qualification prerequisites for every optional backend.
+- The final source revision must pass the complete existing suite; the release package must include its license, configuration guidance, changelog, and contributor credits, and exclude credentials and private development files.
+- Nerve is a community supervisory plug-in, **not a security sandbox or a guarantee that arbitrary third-party Python code is safe**. Hermes retains execution and approval authority. Do not rely on static scan results alone as a proof of safety.
+
+## Local Control Panel (0.3.2.3)
+
+Run `python3 -m hermes_nerve ui` from a checkout, or `nerve ui` after installing the Python package. A private local browser wizard lets you select Operator (the new-install default), toggle individual Nerve modules, choose a Reflex backend, preview the resolved behavior, save with one-click rollback, and install/enable the plugin in a selected Hermes home. No frontend build tools or cloud login are needed. Existing unconfigured installations retain Legacy until explicitly changed. See [Control Panel guide](docs/CONTROL_PANEL.md). Runtime state is not claimed until Hermes restarts.
+
+**0.3.2.3:** The GUI now separates HTTP availability from real System One inference, validates typed responses, invalidates stale results on backend changes, and offers explicitly authorized local installers for D1 and Laya. A local tutorial and managed model stop control are included. No downloaded model or hosted Jev call occurs automatically on setup. See [Local backend tutorial](docs/LOCAL_BACKEND_GUIDE.md).
+
+
+
+Nerve is an asynchronous System-1 supervisory layer for Hermes Agent. `0.3.2.1` adds **Selective Context** on top of the `0.3.2` Verified Experience runtime: evidence-backed typed claims, negative knowledge, successor-run capsules, outcome-linked learning, recovery playbooks, deterministic utility retrieval, explainability, and advisory offline reconciliation. Nerve remembers verified experience rather than conversations. Hermes remains the authority for canonical task state and policy; the core plugin remains dependency-free and model runtimes stay in sidecars.
+
+## v0.3.2.1 — Selective Context
+
+Nerve can now plan the smallest useful working set across memory, tools, and skills without becoming the owner of those resources. The deterministic path is provider-free, mandatory context is pinned, irrelevant memory can be suppressed for a turn, and unselected tools/skills are deferred rather than deleted. Stable task leases reduce context churn. All three surfaces default to shadow mode.
+
+The release preserves the existing Nerve tool surface and Hermes execution authority. See [docs/RELEASE_0.3.2.1.md](docs/RELEASE_0.3.2.1.md).
+
+## v0.3.2 — Verified Experience
+
+Nerve now promotes independently observed work evidence into reusable, scoped experience instead of retaining conversations. It adds typed verified/disproven claims, claim supersession/conflict handling, temporal validity, token-aware admission, utility-ranked retrieval with `why_retrieved`, successor-run capsules built from existing checkpoints, failure-fingerprint recovery playbooks, outcome attribution, hierarchical summaries, a bounded evidence graph, provider-free `nerve_context_explain`, and advisory `nerve experience reconcile`.
+
+Legacy remains the 16-tool compatibility surface; Lean and Marie Kondo gain no new tool-schema tax; their existing work-supervision path can preserve bounded local capsules; headless Kanban workers still expose zero Nerve tools. See [`docs/RELEASE_0.3.2.md`](docs/RELEASE_0.3.2.md).
+
+
+
+## Development — generic System One + Liquid D1
+
+The post-0.3.2.1 development line adds a dependency-free generic TypeSafe-compatible /v1/systemone HTTP provider and a LiquidAI/d1-3B preset. D1 can run as an opt-in primary or, preferably first, as a fail-open shadow behind authoritative Jev. The same provider seam supports image data URLs through optional DecisionEngine images input. Hermes retains final stop/continue and canonical Kanban authority. See docs/D1_SYSTEMONE_INTEGRATION.md.
 
 ## Dev17 — open backend release matrix
 
@@ -109,7 +148,7 @@ Nerve deliberately does **not** own canonical task status, dependencies, retries
 From the extracted final package:
 
 ```bash
-cd nerve-v0.3.1
+cd nerve-v0.3.0
 bash scripts/install_dev17_profile.sh abtest-jev-dev17
 ```
 
@@ -204,7 +243,7 @@ For selected profiles, disabled modules are omitted from the Hermes model/runtim
 
 ### Shared Context
 
-Shared Context is an optional external integration. Nerve does **not** vendor HermesContextBus. Fat Cat and Operator enable the module by default; Lean and Marie Kondo keep it off pending factory A/B evidence.
+Shared Context is an optional external integration. Nerve does **not** vendor HermesContextBus. Because HermesContextBus is not currently published through a public install source, Shared Context is OFF by default in all named profiles. Users with an explicit local HermesContextBus checkout can opt in and install it manually.
 
 To inspect integration availability:
 

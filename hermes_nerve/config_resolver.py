@@ -16,6 +16,7 @@ class ResolvedNerveConfig:
     advanced: dict[str, Any]
     reasons: dict[str, str]
     _adapter: Callable = field(repr=False)
+    ignored_settings_profile: str = ""
 
     def enabled(self, module: str) -> bool:
         return bool(self.modules.get(module, False))
@@ -46,9 +47,16 @@ def _parse_module_overrides(value: Any) -> dict[str, bool]:
 def resolve_config(get_config: Callable | None = None, *, home=None, profile: dict | None = None) -> ResolvedNerveConfig:
     """Resolve defaults -> selected profile -> same-source overrides -> advanced settings.
 
+    The Nerve sidecar document is the store both supported writers maintain
+    (``nerve setup`` and the Control Panel), so when it names a profile it
+    selects the effective profile and its ``nerve_modules`` are honored.
+    Hermes ``config.yaml`` ``nerve_profile`` applies only when no sidecar
+    profile exists. If it names a different profile while the sidecar is
+    present, the sidecar wins and the ignored setting is reported through
+    ``ignored_settings_profile`` so UIs and the CLI can surface the conflict
+    instead of silently diverging from what the operator saved.
+
     No sidecar and no explicit Hermes ``nerve_profile`` means exact Legacy mode.
-    If Hermes selects a different profile from the sidecar, sidecar overrides and
-    advanced values do not bleed into that different profile.
     """
     getter = get_config or (lambda key, default=None: default)
     document = load_profile(home) if profile is None else validate_profile(profile)
@@ -57,13 +65,19 @@ def resolve_config(get_config: Callable | None = None, *, home=None, profile: di
     configured_modules = _parse_module_overrides(getter("nerve_modules", None))
     sidecar_name = document["nerve_profile"] if document else ""
 
-    if configured_profile:
+    ignored_settings_profile = ""
+    if sidecar_name:
+        name = sidecar_name
+        use_sidecar_values = True
+        if configured_profile and configured_profile != sidecar_name:
+            ignored_settings_profile = configured_profile
+    elif configured_profile:
         if configured_profile not in PROFILES:
             raise ValueError(f"Unknown Nerve profile: {configured_profile}")
         name = configured_profile
-        use_sidecar_values = bool(document and sidecar_name == configured_profile)
+        use_sidecar_values = False
     else:
-        name = sidecar_name or "legacy"
+        name = sidecar_name or "legacy"  # Unmarked existing homes stay on Legacy; setup initializes new homes to Operator.
         use_sidecar_values = bool(document)
 
     if name not in PROFILES:
@@ -89,6 +103,11 @@ def resolve_config(get_config: Callable | None = None, *, home=None, profile: di
             "shadow_testing": get("reflex_backend", "jev") == "shadow",
             "receipts": True,
             "local_learning": bool(get("nervous_local_learning", True)),
+            "verified_experience": name == "custom",
+            "selective_context": name == "custom",
+            "selective_context_memory": name == "custom",
+            "selective_context_tools": name == "custom",
+            "selective_context_skills": name == "custom",
         }
     else:
         modules = dict(PROFILES[name])
@@ -132,7 +151,7 @@ def resolve_config(get_config: Callable | None = None, *, home=None, profile: di
                     reasons[key] = "requires " + ", ".join(missing)
                     changed = True
 
-    return ResolvedNerveConfig(name, modules, advanced, reasons, getter)
+    return ResolvedNerveConfig(name, modules, advanced, reasons, getter, ignored_settings_profile)
 
 
 resolve_nerve_config = resolve_config

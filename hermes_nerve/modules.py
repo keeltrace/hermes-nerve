@@ -25,6 +25,11 @@ _SPECS = (
     ModuleSpec('shadow_testing', 'Shadow testing', 'Compare Reflex backends for development/calibration.', ('reflex',)),
     ModuleSpec('receipts', 'Receipts', 'Keep bounded evidence for supervisory decisions.'),
     ModuleSpec('local_learning', 'Local learning', 'Learn from bounded local supervisory outcomes.', ('nervous',)),
+    ModuleSpec('verified_experience', 'Verified experience', 'Persist evidence-backed outcomes and bounded successor-run memories.'),
+    ModuleSpec('selective_context', 'Selective context', 'Plan selective context admission without mandatory provider calls.'),
+    ModuleSpec('selective_context_memory', 'Selective memory', 'Select which verified memory candidates to admit.', ('selective_context',)),
+    ModuleSpec('selective_context_tools', 'Selective tools', 'Prioritize relevant tool schemas for active tasks.', ('selective_context',)),
+    ModuleSpec('selective_context_skills', 'Selective skills', 'Prioritize skill descriptions for task context.', ('selective_context',)),
 )
 MODULES = MappingProxyType({spec.id: spec for spec in _SPECS})
 MODULE_REGISTRY = MODULES

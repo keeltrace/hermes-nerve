@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import math
 from typing import Any, Protocol
 
-from .client import JevClient
+from .client import JevClient, JevError
 from .privacy import redact
 from .receipts import write_receipt
 from .provenance import execution_provenance, result_provenance
@@ -72,6 +73,25 @@ class DecisionEngine:
             provider = get_provider()
         self.provider = provider
 
+    def _system_one(
+        self,
+        *,
+        state: Any,
+        questions: dict[str, dict[str, Any]],
+        model: str | None = None,
+        images: list[str] | tuple[str, ...] | None = None,
+    ):
+        if images:
+            if not bool(getattr(self.provider, "supports_images", False)):
+                raise ValueError("configured decision provider does not support image input")
+            return self.provider.system_one(
+                state=state,
+                questions=questions,
+                model=model,
+                images=list(images),
+            )
+        return self.provider.system_one(state=state, questions=questions, model=model)
+
     @staticmethod
     def _validate_questions(questions: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if not isinstance(questions, dict) or not questions:
@@ -123,14 +143,17 @@ class DecisionEngine:
         state: Any,
         questions: dict[str, Any],
         contract: str = "assess/v1",
+        images: list[str] | tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         """Ask one or more native Jev typed questions in a single request."""
         safe_state = redact(state)
         safe_questions = redact(self._validate_questions(questions))
-        response = self.provider.system_one(state=safe_state, questions=safe_questions)
+        response = self._system_one(state=safe_state, questions=safe_questions, images=images)
+        if not isinstance(getattr(response, "answers", None), dict):
+            raise JevError("provider response answers must be an object")
         missing = [name for name in safe_questions if name not in response.answers]
         if missing:
-            raise ValueError(f"provider response is missing answers for: {', '.join(missing)}")
+            raise JevError(f"provider response is missing answers for: {', '.join(missing)}")
         transport = getattr(response, "transport", "openrouter-decisions")
         live_provider_call = bool(getattr(response, "live_provider_call", True))
         result = {
@@ -158,22 +181,43 @@ class DecisionEngine:
         choices: list[str],
         criteria: dict[str, Any] | None = None,
         contract: str = "decision/v1",
+        images: list[str] | tuple[str, ...] | None = None,
     ) -> DecisionResult:
         labels = [str(item).strip() for item in choices if str(item).strip()]
         if len(labels) < 2 or len(set(labels)) != len(labels):
             raise ValueError("choices must contain at least two unique non-empty labels")
         safe_state = redact(state)
         mapped = {label: (criteria or {}).get(label) for label in labels}
-        response = self.provider.system_one(
+        response = self._system_one(
             state=safe_state,
             questions={"decision": {"type": "choice", "instructions": instructions, "criteria": mapped}},
+            images=images,
         )
+        if not isinstance(getattr(response, "answers", None), dict):
+            raise JevError("provider response answers must be an object")
         answer = response.answers.get("decision") or {}
+        if answer is None:
+            raise JevError("provider response is missing answer for 'decision'")
+        if not isinstance(answer, dict):
+            raise JevError("provider response answer for 'decision' must be an object")
         value = str(answer.get("choice") or "")
-        probabilities = {str(k): float(v) for k, v in (answer.get("probabilities") or {}).items()}
+        if not value.strip():
+            raise JevError("provider response is missing a choice")
+        raw_probabilities = answer.get("probabilities") or {}
+        if not isinstance(raw_probabilities, dict):
+            raise JevError("provider response probabilities must be an object")
+        try:
+            probabilities = {str(k): float(v) for k, v in raw_probabilities.items()}
+        except (TypeError, ValueError):
+            raise JevError("provider response probabilities must be numeric")
         if value not in mapped:
             raise ValueError(f"provider returned out-of-contract choice: {value!r}")
-        confidence = float(answer.get("confidence", probabilities.get(value, 0.0)))
+        try:
+            confidence = float(answer.get("confidence", probabilities.get(value, 0.0)))
+        except (TypeError, ValueError):
+            raise JevError("provider response confidence must be numeric")
+        if not math.isfinite(confidence) or any(not math.isfinite(p) for p in probabilities.values()):
+            raise JevError("provider response confidence and probabilities must be finite")
         result = DecisionResult(
             value,
             confidence,
@@ -196,18 +240,34 @@ class DecisionEngine:
             provenance=dict(stored.get("provenance") or {}),
         )
 
-    def rank(self, *, state: Any, instructions: str, items: dict[str, Any], contract: str = "rank/v1") -> dict[str, Any]:
+    def rank(
+        self,
+        *,
+        state: Any,
+        instructions: str,
+        items: dict[str, Any],
+        contract: str = "rank/v1",
+        images: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
         result = self.decide(
             state=state,
             instructions=instructions,
             choices=list(items),
             criteria=items,
             contract=contract,
+            images=images,
         )
         ranking = sorted(result.probabilities.items(), key=lambda pair: (-pair[1], pair[0]))
         return {**result.as_dict(), "ranking": [{"label": label, "probability": prob} for label, prob in ranking]}
 
-    def verify(self, *, state: Any, instructions: str, contract: str = "verify/v1") -> DecisionResult:
+    def verify(
+        self,
+        *,
+        state: Any,
+        instructions: str,
+        contract: str = "verify/v1",
+        images: list[str] | tuple[str, ...] | None = None,
+    ) -> DecisionResult:
         return self.decide(
             state=state,
             instructions=instructions,
@@ -219,4 +279,5 @@ class DecisionEngine:
                 "ESCALATE": "Human judgment, permission, missing information, or an external dependency is required.",
             },
             contract=contract,
+            images=images,
         )
