@@ -19,7 +19,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover - exercised on 3.10
+    tomllib = None
 from pathlib import Path
 
 import pytest
@@ -27,6 +30,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import unittest
+
+if tomllib is None:
+    raise unittest.SkipTest("tomllib requires Python 3.11+; release-verifier identity contract is covered on 3.11+")
 EXPECTED_VERSION = "0.4.14"
 
 

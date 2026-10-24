@@ -118,6 +118,7 @@ class ObserverBoundaryTests(unittest.TestCase):
             self.assertNotEqual(live, disk)
         self.assertEqual(calls, [])
 
+    @unittest.skipIf(sys.version_info < (3, 11), "code.replace(co_qualname=...) requires 3.11+")
     def test_code_qualname_subclass_cannot_dispatch_sorting(self):
         calls = []
         class Text(str):

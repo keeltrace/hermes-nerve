@@ -32,8 +32,14 @@ def test_timeout_does_not_wait_for_descendant_stdout(tmp_path):
     assert time.monotonic() - start < 0.9
     child_pid = int(output.splitlines()[0])
     try:
-        stat = Path(f"/proc/{child_pid}/stat")
-        state = stat.read_text().rsplit(")", 1)[1].split()[0] if stat.exists() else None
+        def _descendant_state():
+            stat = Path(f"/proc/{child_pid}/stat")
+            return stat.read_text().rsplit(")", 1)[1].split()[0] if stat.exists() else None
+        deadline = time.monotonic() + 2.0
+        state = _descendant_state()
+        while state not in (None, "Z") and time.monotonic() < deadline:
+            time.sleep(0.05)
+            state = _descendant_state()
         assert state in (None, "Z"), "Timed-out verification left an executing descendant"
     finally:
         try:

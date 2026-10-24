@@ -174,9 +174,11 @@ class ProgressIntegrityQolTests(unittest.TestCase):
                  (0, '1 failed in 0.01s', False))
         for exit_code, output, verified in cases:
             with self.subTest(exit_code=exit_code, output=output), tempfile.TemporaryDirectory() as td:
-                with patch.dict(os.environ, {
-                    'HERMES_NERVE_NERVOUS_EVENTS': str(Path(td) / 'nervous.jsonl'),
-                    'HERMES_NERVE_OUTCOMES': str(Path(td) / 'outcomes.jsonl'),
+                # events live outside the workspace td: a late async flush must never
+                # race the workspace TemporaryDirectory cleanup (CI 3.12 Errno 39)
+                with tempfile.TemporaryDirectory() as events_td, patch.dict(os.environ, {
+                    'HERMES_NERVE_NERVOUS_EVENTS': str(Path(events_td) / 'nervous.jsonl'),
+                    'HERMES_NERVE_OUTCOMES': str(Path(events_td) / 'outcomes.jsonl'),
                 }):
                     system = self._system(td)
                     system.start_turn(user_message='Fix src/parser.py and run regression tests',
