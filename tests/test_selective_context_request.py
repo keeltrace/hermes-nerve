@@ -112,6 +112,32 @@ class RequestIntegration(unittest.TestCase):
         self.assertTrue(BRIDGE_TOOL_NAMES.issubset({t["function"]["name"] for t in captured["tools"]}))
         self.assertEqual(self.request, before, "Never mutate stock request/history")
 
+    def test_original_goal_survives_injected_context_and_is_session_scoped(self):
+        self.register()
+        self.settings["selective_context_memory_mode"] = "off"
+        self.manager.invoke_hook("pre_llm_call", session_id="s1", turn_id="turn1",
+                                 user_message="Review GitHub pull request code")
+        self.manager.invoke_hook("pre_llm_call", session_id="other-session", turn_id="turn1",
+                                 user_message="Cook dinner from recipes")
+        request = copy.deepcopy(self.request)
+        request["messages"][-1]["content"] += "\n" + " ".join(f"metadata{i}" for i in range(300))
+        captured = self.capture(request)
+        descriptions = "\n".join(td["function"]["description"] for td in captured["tools"])
+        self.assertIn("github_pr_review: Review GitHub", descriptions)
+        self.assertNotIn("dinner_recipes: Cook dinner", descriptions)
+
+    def test_provider_bound_hermes_tool_search_alias_applies_catalog(self):
+        self.register()
+        request = copy.deepcopy(self.request)
+        for td in request["tools"]:
+            if td["function"]["name"] == "tool_search":
+                td["function"]["name"] = "hermes_tool_search"
+        captured = self.capture(request)
+        descriptions = "\n".join(td["function"]["description"] for td in captured["tools"])
+        self.assertNotIn("dinner_recipes: Cook dinner", descriptions)
+        self.assertIn("dinner_recipes", descriptions)
+        self.assertIn("github_pr_review: Review GitHub", descriptions)
+
     def test_off_and_explicit_shadow_leave_exact_payload(self):
         self.register()
         for mode in ("off", "shadow"):

@@ -51,10 +51,14 @@ def _tool_name(definition):
 def _tool_context(tools, goal, settings):
     from tools.tool_search import BRIDGE_TOOL_NAMES, classify_tools
 
+    # Hermes disambiguates tool_search to hermes_tool_search on some
+    # provider-bound surfaces. Recognition must happen AFTER that aliasing.
+    bridge_names = BRIDGE_TOOL_NAMES | {"hermes_tool_search"}
     names = {_tool_name(t) for t in tools if isinstance(t, dict)}
+    canonical_names = {"tool_search" if name == "hermes_tool_search" else name for name in names}
     # Never hide a schema unless the session ALREADY provides the complete
     # stock search/describe/call bridge. Never fabricate a bridge or privilege.
-    if not BRIDGE_TOOL_NAMES.issubset(names):
+    if not BRIDGE_TOOL_NAMES.issubset(canonical_names):
         return tools
     normalized = [t if "function" in t else {"type": "function", "function": t}
                   for t in tools if isinstance(t, dict)]
@@ -75,7 +79,7 @@ def _tool_context(tools, goal, settings):
             continue
         td = deepcopy(td)
         fn = td.get("function", td)
-        if name in BRIDGE_TOOL_NAMES and isinstance(fn.get("description"), str):
+        if name in bridge_names and isinstance(fn.get("description"), str):
             fn["description"] = _select_catalog(fn["description"], goal, settings)
         result.append(td)
     return result
@@ -132,7 +136,7 @@ def _select_catalog(description, goal, settings):
     return "".join(lines)
 
 
-def request_context(*, request, settings):
+def request_context(*, request, settings, goal=None):
     """Request-only transformation. Unknown layouts/settings fail open."""
     if not isinstance(request, dict) or settings.get("selective_context_enabled", True) is not True:
         return request
@@ -140,7 +144,7 @@ def request_context(*, request, settings):
               for kind in ("skills", "tools")}
     if all(getattr(cfg, kind).mode == "off" for kind, cfg in active.items()):
         return request
-    goal = _goal(request)
+    goal = goal if isinstance(goal, str) else _goal(request)
     if not goal.strip():
         return request
     result = deepcopy(request)
@@ -165,9 +169,20 @@ def register_context_consumers(ctx, settings_getter):
     Resolve settings for EVERY invocation, not once per session; ON/OFF/SHADOW
     changes take effect on the next request. No globals holding users or goals.
     """
+    from collections import OrderedDict
+    from threading import Lock
+    goals = OrderedDict()
+    goals_lock = Lock()
+
+    def turn_key(kwargs):
+        session, turn = kwargs.get("session_id"), kwargs.get("turn_id")
+        return (session, turn) if isinstance(session, str) and session and isinstance(turn, str) and turn else None
+
     def llm_request(*, request, **kwargs):
         try:
-            result = request_context(request=request, settings=settings_getter())
+            with goals_lock:
+                original_goal = goals.get(turn_key(kwargs))
+            result = request_context(request=request, settings=settings_getter(), goal=original_goal)
             if result != request:
                 return {"request": result, "source": "nerve:selective-context",
                         "reason": "apply relevant tool and skill context"}
@@ -178,6 +193,16 @@ def register_context_consumers(ctx, settings_getter):
 
     def memory_context(**kwargs):
         try:
+            # Ranking against the assembled user message lets injected memory
+            # metadata drown the actual task. Capture the host's ORIGINAL
+            # user goal before injection, scoped to the exact session/turn.
+            key, goal = turn_key(kwargs), kwargs.get("user_message")
+            if key is not None and isinstance(goal, str):
+                with goals_lock:
+                    goals[key] = goal
+                    goals.move_to_end(key)
+                    while len(goals) > 128:
+                        goals.popitem(last=False)
             settings = settings_getter()
             controller = consumer._controller(settings, "memory")
             if not controller.config.enabled or controller.config.memory.mode == "off":

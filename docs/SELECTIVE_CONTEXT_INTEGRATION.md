@@ -78,6 +78,102 @@ Observed local results:
 - The actual plugin entrypoint registers the integration, and parent disable is
   honored on a subsequent request without re-registering callbacks.
 
-This is isolated local integration qualification, **not** a claim that a running
-Discord/CLI/desktop gateway was upgraded or restarted, nor a live-provider test.
-No full Nerve suite rerun, publication, push, merge or deployment is included.
+The original fixture-only qualification above is supplemented by real-session
+qualification below. No production gateway was upgraded or restarted.
+
+## Real Hermes sessions and follow-up repairs
+
+The continuation from `8252965` found and repaired two real integration gaps:
+
+- Provider-bound Tool Search is named `hermes_tool_search`, while the pre-provider
+  bridge schemas use `tool_search`. Both must preserve the complete discovery
+  bridge and apply catalog selection.
+- Selection must use the **original user goal**, not the assembled user message:
+  injected memory metadata otherwise diluted ranking enough to demote even the
+  relevant tool. The pre-LLM callback now supplies a bounded, lock-protected,
+  exact-session/turn goal map to request middleware. No cross-session fallback.
+
+Three isolated native `AIAgent.run_conversation` sessions used real existing
+Codex-subscription OAuth and model `gpt-6.1-sol`. Native plugin discovery,
+tool/skill assembly, memory retrieval, middleware and provider transport ran
+without monkeypatches or fabricated responses. Each session completed with `OK`
+and two real provider responses. Only synthetic fixture context was sent.
+
+The ordinary `pre_api_request` observer preview truncates long instructions.
+The qualification helper therefore captures the complete payload in supported
+`llm_execution` middleware, then calls `next_call(request)` unchanged and records
+its actual response ID. Authorization headers are not captured.
+
+Observed before/after excerpts from the first real outgoing request:
+
+```text
+OFF and SHADOW skill index:
+    - github-review: Review GitHub pull request code
+    - recipes: Cook dinner from recipes
+
+ON skill index:
+    - github-review: Review GitHub pull request code
+    - recipes
+
+OFF and SHADOW deferred tool catalog:
+- fixture_github_review: Review GitHub pull request code
+- fixture_recipes: Cook dinner from recipes
+
+ON deferred tool catalog:
+- fixture_github_review: Review GitHub pull request code
+- fixture_recipes
+```
+
+Memory sentinel assertions on those same requests:
+
+- `ORCHID-47` (relevant evidence): present only ON.
+- `PINNED-18` (mandatory negative evidence): present only ON.
+- `RECIPE-92` (irrelevant candidate): absent in every mode.
+- The mandatory user instruction survives all modes.
+- The core terminal schema is identical in all modes.
+- All visible tool names and deferred catalog/skill names remain available.
+- OFF and SHADOW skill blocks and tool-catalog descriptions match exactly.
+
+Full requests and response IDs stay local; they are not published. A local proof
+receipt stores request SHA-256 values, response IDs, final results, and assertions.
+The reproducible real-session helper is:
+
+```sh
+python scripts/verify_selective_context_session.py --mode off --output /path/to/new-off
+python scripts/verify_selective_context_session.py --mode apply --output /path/to/new-on
+python scripts/verify_selective_context_session.py --mode shadow --output /path/to/new-shadow
+```
+
+This helper deliberately requires an existing Codex subscription. It never
+copies personal config/memory/auth files into the isolated fixture homes.
+
+### Integrity objection
+
+The progress guard classified tracked source under any ancestor named `scratch`
+as disposable. The initial Selective Context worktree used exactly such a path.
+It now requires actual local Git tracking evidence before treating an ordinary
+source filename under scratch as progress. Untracked probes, explicitly named
+probe files (even when tracked), and Git lookup failures still do not qualify.
+The classifier change does not waive mutation, path-relevance, or verification
+requirements. The original serving gateway is not modified by this source fix.
+
+### Native admission and CI
+
+The inherited CI scanner-exception wrapper was removed, not repaired or expanded.
+CI now runs unmodified native validation against pinned official Hermes commit
+`1c0cd667746d3395fe9e1b6c74f8f85952486f18`, plus the native request integration
+suite. The locally exercised `plugin_guard.py`, `plugin_guard_context.py` and
+`skills_guard.py` were SHA-256 compared to that exact official revision: all
+three matched byte-for-byte. Native validation passed with **caution**, not a
+DANGEROUS override, and native doctor passed. No Hermes core source was edited.
+
+The blanket test-temp-directory error suppression and unused deadline fixture
+inherited from the PR were removed; tests must expose real cleanup failures.
+
+Final local verification after integration:
+
+- **12** native request integration tests passed, zero skipped.
+- **67** targeted activation/planner/registration/progress/security regressions passed.
+- **129** core/profile/experience/nervous/deadline regressions passed.
+
+These checks do not claim a fleet deployment, a merge, or a new release.
