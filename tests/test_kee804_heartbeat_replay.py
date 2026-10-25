@@ -81,6 +81,11 @@ class HeartbeatReplayTests(unittest.TestCase):
             self.assertEqual(state["relevant_mutation_attempts"], 1)
             self.assertIsNone(gate)
             self.assertFalse([e for e in events if e.get("kind") == "progress_completion_blocked"])
+            # The nervous worker is asynchronous. Drain its queued tasks and
+            # stop it before TemporaryDirectory cleanup to avoid a Python
+            # 3.14 race where a late JSONL write recreates the directory.
+            self.assertTrue(system.drain(timeout=5.0))
+            system.configure(enabled=False)
 
     def test_real_coding_task_remains_guarded(self):
         with tempfile.TemporaryDirectory() as td:
