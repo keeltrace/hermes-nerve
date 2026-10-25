@@ -177,10 +177,14 @@ class TestVersionSourcesAgree:
 
         assert VERSION == EXPECTED_VERSION
 
-    def test_no_core_dependencies_and_laya_pinned(self):
+    def test_no_core_dependencies_or_shared_workspace_extras(self):
         py = tomllib.loads((ROOT / "pyproject.toml").read_text())
         assert py["project"]["dependencies"] == []
-        assert py["project"]["optional-dependencies"]["laya"] == ["laya==0.3.29"]
+        assert not py["project"].get("optional-dependencies")
+        assert not py.get("dependency-groups")
+        assert not py.get("tool", {}).get("uv", {}).get("dev-dependencies")
+        assert py.get("tool", {}).get("uv", {}).get("package") is not True
+        assert "build-system" not in py
 
 
 class TestEnvironmentRestored:

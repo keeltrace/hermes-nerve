@@ -76,7 +76,13 @@ def _verify_release_checks():
  py=tomllib.loads((ROOT/"pyproject.toml").read_text())
  package_version=check_versions(py,EXPECTED)
  assert py["project"]["dependencies"]==[],"core plugin must remain dependency-free"
- assert py["project"]["optional-dependencies"]["laya"]==["laya==0.3.29"]
+ # Hermes PM treats ANY nonempty extra/group as a shared-uv-workspace member.
+ # Even a development extra can bring incompatible deps during normal updates.
+ assert not py["project"].get("optional-dependencies"),"Nerve must not declare pip extras in the host workspace"
+ assert not py.get("dependency-groups"),"Nerve must not declare host workspace dependency groups"
+ assert not py.get("tool",{}).get("uv",{}).get("dev-dependencies"),"No legacy uv dev dependencies"
+ assert py.get("tool",{}).get("uv",{}).get("package") is not True,"Nerve must not opt into host package installs"
+ assert "build-system" not in py,"Host workspace must not build Nerve as a dependency member"
  from hermes_nerve.cli import _advanced_catalog
  init_text=(ROOT/"__init__.py").read_text()
  profile_block=init_text[init_text.index("def _register_profile(ctx):"):init_text.index("\ndef register(ctx):",init_text.index("def _register_profile(ctx):"))]

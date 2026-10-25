@@ -33,6 +33,10 @@ hermes_nerve = ["web/*.html", "web/*.css", "web/*.js", "research/*.md", "policy/
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[project.optional-dependencies]
-dev = ["PyYAML>=6,<7", "pytest>=8,<10", "tomli>=2,<3; python_version < '3.11'"]
-laya = ["laya==0.3.29"]
+# Deliberately NO [project.optional-dependencies], dependency groups, or build-system.
+# Hermes includes a plugin pyproject in its shared uv workspace if it declares
+# *any* installable extra/group. When uv resolves all workspace environments,
+# Laya -> Torch made regular Hermes updates disable Nerve for Android/Python 3.14.
+# Nerve's runtime is dependency-free. Laya/D1 are installed ONLY into their
+# separate, opt-in sidecar venvs by hermes_nerve.local_backend_setup.
+# Contributor test dependencies are documented in CONTRIBUTING.md, not extras.

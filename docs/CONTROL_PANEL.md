@@ -133,4 +133,6 @@ Optional full suite:
     python3 -m unittest discover -s tests -p "test_*.py" -q
 
 Two historical test modules require PyYAML or pytest; missing developer dependencies affect full
-test coverage, not the zero-dependency runtime path. Install the project's dev extra for the complete suite.
+test coverage, not the zero-dependency runtime path. Install the explicit developer
+requirements in `CONTRIBUTING.md` in your own test environment. Nerve deliberately
+has no project extras: Hermes otherwise includes them in normal update dependency resolution.

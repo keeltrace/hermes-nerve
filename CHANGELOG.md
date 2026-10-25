@@ -1,3 +1,18 @@
+## Unreleased — normal Hermes update dependency isolation
+
+- Prevented ordinary Hermes upgrades from disabling Nerve when optional ML
+  dependencies cannot resolve for the host's complete uv target matrix
+  (observed: Python 3.14 / Android, Laya 0.3.29 → Torch).
+- Removed both Laya and development extras from the Nerve plugin's packaging
+  metadata. Nerve now has no runtime dependencies, optional dependencies,
+  dependency groups, or build-system declaration; Hermes's plugin admission
+  therefore has no Nerve-owned packages to add to its shared workspace.
+- Retained explicit Laya/D1 installers in isolated, user-authorized sidecar
+  virtual environments; contributor test tools are documented separately.
+- This fixes future installs/updates with corrected Nerve metadata. Hermes
+  profiles already disabled by an earlier update require a one-time Nerve
+  metadata refresh and re-enable after dependency admission succeeds.
+
 ## Unreleased — Selective Context activation semantics
 
 - Enabling the parent Selective Context module now means enabled memory, tool

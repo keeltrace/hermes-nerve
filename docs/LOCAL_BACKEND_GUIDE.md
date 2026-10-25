@@ -45,6 +45,14 @@ Official source: https://huggingface.co/convaiinnovations/laya-typed-decisions
 
 One-click install uses HERMES_HOME/nerve/local-backends/laya/venv, installs pinned laya==0.3.29 via PyPI, launches the local server on 127.0.0.1:8765, fetches the model on first launch and runs genuine inference. The checkpoint/dependency download size varies by platform.
 
+**Hermes update compatibility:** Nerve does not declare Laya or PyTorch as a
+`pyproject.toml` extra or core dependency. They are installed **only after an
+explicitly approved sidecar setup** into a dedicated venv, not Hermes's shared
+plugin dependency workspace. This prevents optional model packages from causing
+Hermes's normal dependency-resolution step to disable Nerve. Do not add model
+dependencies back into Nerve's `[project.optional-dependencies]` or other
+workspace dependency groups.
+
 ## OpenJev and Generic System One
 
 OpenJev requires a separate hardware-specific setup (often vLLM and substantial GPU memory). It is NOT automatically downloaded through this wizard. Follow https://huggingface.co/openjev/openjev/blob/main/serve/SERVE.md. Expose its helper on an explicit HTTP loopback address with POST /v1/systemone, default 127.0.0.1:3000, then run the real test.
