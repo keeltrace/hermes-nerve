@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hermes-Jev dev17 backend matrix: hosted Jev vs Laya vs OpenJev.
+"""Nerve backend matrix: hosted Jev vs Laya vs OpenJev vs Liquid D1.
 
 The worker model, fixture, DoD, Nerve thresholds, and Hermes profile baseline are
 held constant. Only ``reflex_backend`` changes. Results are flushed after every
@@ -98,7 +98,9 @@ def metrics(profile: str, task: str, run_id: int) -> dict[str, Any]:
 def patch_profile(profile: str, backend: str, args) -> None:
     py=Path.home()/".hermes/hermes-agent/venv/bin/python"
     cmd=[str(py if py.exists() else Path(sys.executable)),str(ROOT/"scripts/configure_reflex_profile.py"),profile,"--backend",backend,
-         "--laya-base-url",args.laya_url,"--openjev-base-url",args.openjev_url,"--orchestrator-reviewer",args.source_profile]
+         "--laya-base-url",args.laya_url,"--openjev-base-url",args.openjev_url,
+         "--d1-base-url",args.d1_url,"--d1-model",args.d1_model,
+         "--orchestrator-reviewer",args.source_profile]
     if args.openjev_expected_identity: cmd += ["--openjev-expected-identity",args.openjev_expected_identity]
     run(cmd,check=True)
 
@@ -109,6 +111,10 @@ def sidecar_preflight(backend: str, args) -> None:
     elif backend=="openjev":
         cmd=[sys.executable,str(ROOT/"scripts/check_openjev_sidecar.py"),"--base-url",args.openjev_url]
         if args.openjev_expected_identity: cmd += ["--expected-identity",args.openjev_expected_identity]
+        run(cmd,check=True,timeout=30)
+    elif backend=="d1":
+        cmd=[sys.executable,str(ROOT/"scripts/check_systemone_sidecar.py"),"--d1","--base-url",args.d1_url,"--model",args.d1_model]
+        if args.d1_expected_identity: cmd += ["--expected-identity",args.d1_expected_identity]
         run(cmd,check=True,timeout=30)
 
 
@@ -263,7 +269,7 @@ def write_summary(rows: list[dict[str, Any]], out: Path):
         if rr:
             vals=[int(r['combined']) for r in rr]; lines.append(f"{arm}_combined_median={int(statistics.median(vals))} {arm}_combined_max={max(vals)}")
     base={str(r['pair']):r for r in rows if r['arm']=='jev' and int(r['valid'])==1}
-    for arm in ('laya','openjev'):
+    for arm in ('laya','openjev','d1'):
         comps=[]
         for r in rows:
             if r['arm']==arm and int(r['valid'])==1 and str(r['pair']) in base:
@@ -276,16 +282,19 @@ def write_summary(rows: list[dict[str, Any]], out: Path):
 def main() -> int:
     p=argparse.ArgumentParser()
     p.add_argument('--pairs',type=int,default=int(os.getenv('PAIRS','2')))
-    p.add_argument('--arms',default=os.getenv('ARMS','jev,laya,openjev'))
+    p.add_argument('--arms',default=os.getenv('ARMS','jev,laya,openjev,d1'))
     p.add_argument('--source-profile',default=os.getenv('SOURCE_PROFILE','abtest-jev-dev17'))
     p.add_argument('--laya-url',default=os.getenv('HERMES_REFLEX_LAYA_BASE_URL','http://127.0.0.1:8765'))
     p.add_argument('--openjev-url',default=os.getenv('HERMES_REFLEX_OPENJEV_BASE_URL','http://127.0.0.1:3000'))
     p.add_argument('--openjev-expected-identity',default=os.getenv('HERMES_REFLEX_OPENJEV_EXPECTED_IDENTITY',''))
+    p.add_argument('--d1-url',default=os.getenv('HERMES_REFLEX_D1_BASE_URL','http://127.0.0.1:8080'))
+    p.add_argument('--d1-model',default=os.getenv('HERMES_REFLEX_D1_MODEL','LiquidAI/d1-3B'))
+    p.add_argument('--d1-expected-identity',default=os.getenv('HERMES_REFLEX_D1_EXPECTED_IDENTITY',''))
     p.add_argument('--emergency-primary-cap',type=int,default=int(os.getenv('EMERGENCY_PRIMARY_CAP','2400000')))
     p.add_argument('--max-runtime',type=int,default=3600); p.add_argument('--spawn-wait',type=int,default=180)
     p.add_argument('--out',default='')
     a=p.parse_args(); a.stamp=time.strftime('%Y%m%d-%H%M%S'); arms=[x.strip() for x in a.arms.split(',') if x.strip()]
-    unknown=set(arms)-{'jev','laya','openjev'}
+    unknown=set(arms)-{'jev','laya','openjev','d1'}
     if unknown: raise SystemExit(f"unsupported arms: {sorted(unknown)}")
     if not (Path.home()/'.hermes/profiles'/a.source_profile).is_dir(): raise SystemExit(f"source profile missing: {a.source_profile}")
     out=Path(a.out).expanduser() if a.out else Path.home()/f"jev-dev17-matrix-{a.stamp}"; out.mkdir(parents=True,exist_ok=True)

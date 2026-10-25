@@ -23,6 +23,16 @@ class CanonicalKanbanAdapter:
         self._kb = kb
         return kb
 
+    def _connection(self, kb):
+        """Use Hermes' canonical connection owner across its API split."""
+        connect_closing = getattr(kb, "connect_closing", None)
+        if not callable(connect_closing):
+            try:
+                from hermes_cli.kanban_db_connect import connect_closing
+            except ImportError as exc:
+                raise RuntimeError("Hermes canonical Kanban connection API is unavailable") from exc
+        return connect_closing()
+
     def request_review(
         self,
         *,
@@ -33,7 +43,7 @@ class CanonicalKanbanAdapter:
         reviewer: str = "",
     ) -> tuple[bool, str | None]:
         kb = self._module()
-        with kb.connect_closing() as conn:
+        with self._connection(kb) as conn:
             result = kb.request_review(
                 conn,
                 task_id,
@@ -58,7 +68,7 @@ class CanonicalKanbanAdapter:
         metadata: dict[str, Any] | None = None,
     ) -> bool:
         kb = self._module()
-        with kb.connect_closing() as conn:
+        with self._connection(kb) as conn:
             return bool(
                 kb.complete_task(
                     conn,

@@ -7,8 +7,14 @@ Nerve is contract-first. Changes should preserve bounded provider work, determin
 Nerve has no required runtime Python dependencies beyond the standard library. Release verification additionally uses PyYAML:
 
 ```bash
-python -m pip install "PyYAML>=6,<7" "tomli>=2,<3; python_version < '3.11'"
+python -m pip install "PyYAML>=6,<7" "pytest>=8,<9" "tomli>=2,<3; python_version < '3.11'"
 ```
+
+Nerve intentionally has **no installable project extras or dependency groups**. Hermes
+uses them to populate its shared Python dependency environment during ordinary
+`hermes update` operations. Model runtimes, including Laya and its PyTorch
+dependencies, are installed only into explicit, isolated sidecar environments.
+Install these test tools into a **separate developer environment**, not Hermes.
 
 Before opening a PR, run:
 

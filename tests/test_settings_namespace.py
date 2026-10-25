@@ -138,6 +138,43 @@ class SettingsNamespaceTests(unittest.TestCase):
         self.assertEqual(entries[PLUGIN_ID]["settings"], {"reflex_backend": "laya", "reflex_shadow_async": False})
         self.assertNotIn("hermes-nerve", entries)
 
+    def test_configure_reflex_profile_enables_shadow_testing_module(self):
+        entries, _ = self.run_configure_script(
+            {"plugins": {"entries": {PLUGIN_ID: {"config": {
+                "nerve_modules": {"assistant_audit": True},
+            }}}}},
+            "--backend", "shadow",
+            "--shadow-backend", "d1",
+            "--no-shadow-sync",
+        )
+        settings = entries[PLUGIN_ID]["settings"]
+        self.assertEqual(settings["reflex_backend"], "shadow")
+        self.assertEqual(settings["reflex_shadow_backend"], "d1")
+        self.assertIs(settings["reflex_shadow_async"], True)
+        self.assertEqual(
+            settings["nerve_modules"],
+            {"assistant_audit": True, "shadow_testing": True},
+        )
+
+    def test_fat_cat_explicit_shadow_module_keeps_shadow_backend(self):
+        config = {"plugins": {"entries": {PLUGIN_ID: {"settings": self.settings({
+            "nerve_profile": "fat_cat",
+            "nerve_modules": {"shadow_testing": True},
+            "reflex_backend": "shadow",
+            "reflex_shadow_backend": "d1",
+            "reflex_d1_model": "LiquidAI/d1-3B",
+            "reflex_shadow_async": True,
+        })}}}}
+        with self.assertLogs("hermes_nerve", level="INFO") as logs:
+            module = self.register("nerve_fat_cat_d1_shadow_enabled", config)
+        cfg = module.reflex.settings()
+        self.assertEqual(cfg["backend"], "shadow")
+        self.assertEqual(cfg["shadow_backend"], "d1")
+        self.assertIs(cfg["shadow_async"], True)
+        text = "\n".join(logs.output)
+        self.assertIn("backend=shadow", text)
+        self.assertIn("shadow_backend=d1", text)
+
     def test_configure_reflex_profile_leaves_a_legacy_entry_untouched(self):
         # The script does not migrate: it reports the ignored entry and changes nothing in it.
         legacy = {"settings": {"reflex_backend": "jev", "reflex_laya_base_url": "https://stale.example/v1"}}

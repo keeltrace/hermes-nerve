@@ -1,0 +1,5 @@
+include scripts/install_dev17_profile.sh
+include scripts/install_runtime_payload.py
+include scripts/install_profile_transaction.py
+include tests/fixtures/policy-members-b486692.json
+include docs/PR_INTEGRATION.md

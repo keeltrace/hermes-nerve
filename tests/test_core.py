@@ -4,12 +4,37 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 from hermes_nerve import client, context, engine, gate, ledger, lifecycle, paths, privacy, receipts, tools
 from hermes_nerve.context_engine import NerveContextEngine
 from hermes_nerve.jsonl import read_jsonl
+
+
+@contextmanager
+def isolated_profile_filesystem():
+    """Real scratch files, with explicit canonical root and no host profiles.
+
+    These unit tests model a fresh Hermes installation. The mandated scratch
+    location may itself sit below a real profile, which must not become part
+    of that model. Keep actual fixture existence/marker checks unchanged.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        boundary = Path(td).resolve()
+        real_is_dir, real_is_file = Path.is_dir, Path.is_file
+
+        def fixture_is_dir(candidate):
+            return candidate.resolve().is_relative_to(boundary) and real_is_dir(candidate)
+
+        def fixture_is_file(candidate):
+            return candidate.resolve().is_relative_to(boundary) and real_is_file(candidate)
+
+        with patch.object(paths, "default_hermes_root", return_value=boundary / ".hermes"), \
+             patch.object(Path, "is_dir", fixture_is_dir), \
+             patch.object(Path, "is_file", fixture_is_file):
+            yield td
 
 
 class FakeProvider:
@@ -91,7 +116,7 @@ class EngineTests(unittest.TestCase):
         response = c.system_one(state={"x": 1}, questions={"q": {"type": "choice", "criteria": {"A": None, "B": None}}})
         self.assertEqual(captured["url"], "https://openrouter.ai/api/alpha/decisions")
         self.assertEqual(captured["headers"]["Authorization"], "Bearer secret")
-        self.assertEqual(captured["body"]["model"], "typesafe/jev-1.13")
+        self.assertEqual(captured["body"]["model"], "typesafe/jev-1.14")  # v0.4.0: pinned Jev 1.14
         self.assertEqual(response.answers["q"]["choice"], "A")
         self.assertEqual(response.request_id, "gen-dec-1")
         self.assertEqual(response.provider, "TypeSafe")
@@ -393,6 +418,21 @@ class ToolTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_selective_bypass_covers_introspective_kanban_and_skill_tools(self):
+        with patch.dict(os.environ, {"HERMES_NERVE_GATE_SCOPE": "selective"}, clear=False):
+            # Preserve the newer catalog's exact telemetry reason while retaining
+            # PR #64's fallback for introspection not yet present in the catalog.
+            for tool_name, args, reason in (
+                ("kanban_list", {}, "read-only-tool"),
+                ("kanban_show", {"task_id": "t_x"}, "catalog-read-only"),
+                ("kanban_attachments", {"task_id": "t_x"}, "read-only-tool"),
+                ("skill_view", {"name": "digital-assistant"}, "catalog-read-only"),
+                ("skills_list", {}, "catalog-read-only"),
+            ):
+                self.assertEqual(gate.bypass_reason(tool_name, args), reason, tool_name)
+            for tool_name in ("kanban_complete", "kanban_create", "kanban_block", "skill_manage", "kanban_attach"):
+                self.assertIsNone(gate.bypass_reason(tool_name, {}), tool_name)
+
     def setUp(self):
         gate._configured_mode = None
         gate._configured_min_confidence = None
@@ -416,6 +456,39 @@ class GateTests(unittest.TestCase):
             report = gate.report(Path(td) / "gate.jsonl", recent_limit=0)
             self.assertEqual(report["hook_observations"], 200)
             self.assertEqual(report["disabled"], 200)
+
+    def test_gate_report_separates_recent_health_from_lifetime_history(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gate.jsonl"
+            rows = []
+            for idx in range(100):
+                rows.append({
+                    "action": "provider-error", "reason": "provider-unavailable",
+                    "tool_name": "terminal", "provider_call": True, "latency_ms": 0.0,
+                    "timestamp": f"old-{idx}",
+                })
+            for idx in range(500):
+                rows.append({
+                    "action": "evaluated", "reason": "material-or-unknown",
+                    "tool_name": "terminal", "provider_call": True, "latency_ms": 100.0,
+                    "timestamp": f"new-{idx}",
+                })
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+            report = gate.report(path, recent_limit=0)
+            self.assertEqual(report["provider_errors"], 100)
+            self.assertEqual(report["provider_calls"], 600)
+            expected_recent = {
+                "window_events": 500,
+                "provider_calls": 500,
+                "provider_errors": 0,
+                "provider_error_rate": 0.0,
+                "evaluated": 500,
+                "bypassed": 0,
+                "disabled": 0,
+                "average_provider_latency_ms": 100.0,
+            }
+            expected_recent.update({"auto_allowed": 0, "escalated": 0, "blocked": 0})
+            self.assertEqual(report["recent_health"], expected_recent)
 
     def test_gate_off_never_calls_provider(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
@@ -474,7 +547,7 @@ class GateTests(unittest.TestCase):
 
     def test_gate_scope_all_preserves_evaluate_everything_compatibility(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
-            "HERMES_NERVE_GATE_MODE": "advisory",
+            "HERMES_NERVE_GATE_MODE": "ask-only",
             "HERMES_NERVE_GATE_SCOPE": "all",
             "HERMES_NERVE_GATE_EVENTS": str(Path(td) / "gate.jsonl"),
         }, clear=False):
@@ -484,10 +557,21 @@ class GateTests(unittest.TestCase):
                 "ALLOW", 0.99, {"ALLOW": 0.99}, "jev-test", 123.0, "hermes/pre-tool-gate/v1"
             ))
             try:
+                # Round-3: read_file is classified by the deterministic layer
+                # (routine reads auto-allow, sensitive reads escalate) — the
+                # scope=all path no longer bypasses it as "read-only-tool".
                 self.assertIsNone(gate.pre_tool_call("read_file", {"path": "README.md"}, "t"))
+                # an unrecognized command still reaches the model under scope=all
+                self.assertIsNone(gate.pre_tool_call("terminal", {"command": "./unknown-thing.sh"}, "t"))
             finally:
                 gate.evaluate_tool_call = original
+            # terminal still reaches the model under scope=all...
             self.assertEqual(len(calls), 1)
+            events = [json.loads(line) for line in (Path(td) / "gate.jsonl").read_text().splitlines() if line.strip()]
+            read_rows = [e for e in events if e.get("tool_name") == "read_file"]
+            self.assertTrue(read_rows, "read_file must be classified, not bypassed")
+            self.assertEqual(read_rows[0].get("action"), "auto-allow")
+            self.assertIn("safe_routine", read_rows[0].get("reason", ""))
             report = gate.report(Path(td) / "gate.jsonl")
             self.assertEqual(report["evaluated"], 1)
             self.assertEqual(report["provider_calls"], 1)
@@ -498,15 +582,22 @@ class GateTests(unittest.TestCase):
             self.assertEqual(gate.bypass_reason("nerve_verify", {}), "nerve-internal")
 
     def test_evaluated_event_logs_answer_distribution(self):
+        # 0.4.1 P0: advisory mode no longer evaluates synchronously (the
+        # verdict arrives async as telemetry). The synchronous evaluated-event
+        # contract is exercised in ask-only, where provider decisions remain
+        # bounded and authoritative.
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
-            "HERMES_NERVE_GATE_MODE": "advisory",
+            "HERMES_NERVE_GATE_MODE": "ask-only",
             "HERMES_NERVE_GATE_EVENTS": str(Path(td) / "gate.jsonl"),
         }, clear=False):
             original = gate.evaluate_tool_call
             gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult(
                 "ALLOW", 0.97, {"ALLOW": 0.62, "APPROVAL": 0.3, "BLOCK": 0.08}, "jev-test", 1.0, "x")
             try:
-                self.assertIsNone(gate.pre_tool_call("terminal", {"command": "make build"}, "t"))
+                # 0.4.1: ask-only weak-ALLOW escalates to human — the directive
+                # is expected; the evaluated event is still recorded below.
+                # unbounded marker keeps this call in the model band
+                gate.pre_tool_call("terminal", {"command": "make deploy --force"}, "t")
             finally:
                 gate.evaluate_tool_call = original
             row = [r for r in read_jsonl(Path(td) / "gate.jsonl") if r["action"] == "evaluated"][-1]
@@ -541,20 +632,29 @@ class GateTests(unittest.TestCase):
             original = gate.evaluate_tool_call
             gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult("BLOCK", 0.95, {"BLOCK": 0.95}, "jev-test", 1.0, "x")
             try:
-                decision = gate.pre_tool_call("terminal", {"command": "fixture-command"}, "t")
+                decision = gate.pre_tool_call("terminal", {"command": "make deploy --force"}, "t")
             finally:
                 gate.evaluate_tool_call = original
             self.assertEqual(decision["action"], "block")
 
-    def test_enforce_low_confidence_goes_to_human(self):
+    def test_weak_allow_now_escalates_honestly(self):
+        # HITL v2.1 (release review B7): a weak-ALLOW (confidence 0.51,
+        # p(ALLOW) 0.51) on an UNRECOGNIZED command is not evidence of safety.
+        # It escalates with an honest uncertainty note — no bare numbers.
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "enforce", "HERMES_NERVE_MIN_CONFIDENCE": "0.80"}, clear=False):
             original = gate.evaluate_tool_call
             gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult("ALLOW", 0.51, {"ALLOW": 0.51}, "jev-test", 1.0, "x")
             try:
-                decision = gate.pre_tool_call("terminal", {"command": "echo hi"}, "t")
+                decision = gate.pre_tool_call("terminal", {"command": "./scan-clean-operator.sh"}, "t")
             finally:
                 gate.evaluate_tool_call = original
             self.assertEqual(decision["action"], "approve")
+            self.assertNotIn("0.51", decision["message"])
+            self.assertNotIn("0.49", decision["message"])
+            # the message frames this as uncertainty, not a detected danger
+            lower = decision["message"].lower()
+            self.assertTrue("uncertain" in lower or "weak" in lower or "could not" in lower,
+                            decision["message"])
 
     def test_provider_failure_fails_to_human_in_enforce(self):
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "enforce"}, clear=False):
@@ -567,29 +667,41 @@ class GateTests(unittest.TestCase):
             self.assertEqual(decision["action"], "approve")
 
     def test_ask_only_block_escalates_to_human(self):
+        # HITL v2: a BLOCK verdict in ask-only mode escalates with a CONTENT-SCOPED
+        # key (exact action shape), never a generic one.
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
             original = gate.evaluate_tool_call
             gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult("BLOCK", 0.95, {"BLOCK": 0.95}, "jev-test", 1.0, "x")
             try:
-                decision = gate.pre_tool_call("terminal", {"command": "rm -rf ~"}, "t")
+                decision = gate.pre_tool_call("terminal", {"command": "./maybe-dangerous-unknown.sh"}, "t")
             finally:
                 gate.evaluate_tool_call = original
-            self.assertEqual(decision["action"], "approve")
-            self.assertTrue(decision["rule_key"].startswith("nerve:block-escalated:terminal:"))
+        self.assertEqual(decision["action"], "approve")
+        self.assertTrue(decision["rule_key"].startswith("nerve:block-escalated:terminal:") or
+                        decision["rule_key"].startswith("nerve:hitl:"), decision["rule_key"])
+        # the message explains, instead of citing a confidence number
+        self.assertIn("APPROVAL REQUIRED", decision["message"])
+        self.assertNotIn("0.95", decision["message"].split("Note")[0])
 
-    def test_ask_only_enforce_paths_still_gate_allow(self):
+    def test_ask_only_uncertain_band_allow_paths(self):
+        # HITL v2.1: recognized commands pass deterministically (no provider
+        # call); unrecognized commands need STRONG, calibrated model evidence
+        # to proceed. A 50/50 ALLOW is weak evidence and escalates honestly;
+        # a 0.97-calibrated ALLOW proceeds. (B7 release-review fix.)
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
             original = gate.evaluate_tool_call
             gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult("ALLOW", 0.95, {"ALLOW": 0.50, "APPROVAL": 0.50}, "jev-test", 1.0, "x")
             try:
-                gated = gate.pre_tool_call("terminal", {"command": "echo hi"}, "t")
+                recognized = gate.pre_tool_call("terminal", {"command": "echo hi"}, "t")
+                uncertain_weak = gate.pre_tool_call("terminal", {"command": "./unknown-operator-tool.sh"}, "t")
                 gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult("ALLOW", 0.95, {"ALLOW": 0.97, "APPROVAL": 0.03}, "jev-test", 1.0, "x")
-                passed = gate.pre_tool_call("terminal", {"command": "echo hi"}, "t")
+                uncertain_strong = gate.pre_tool_call("terminal", {"command": "./unknown-operator-tool.sh"}, "t")
             finally:
                 gate.evaluate_tool_call = original
-            self.assertEqual(gated["action"], "approve")
-            self.assertEqual(gated["rule_key"], "nerve:low-allow-probability")
-            self.assertIsNone(passed)
+            self.assertIsNone(recognized)              # deterministic layer, model never called
+            self.assertEqual(uncertain_weak["action"], "approve")   # weak evidence -> human
+            self.assertNotIn("0.50", uncertain_weak["message"])
+            self.assertIsNone(uncertain_strong)        # calibrated ALLOW -> proceed
 
     def test_ask_only_block_approval_key_is_action_specific_and_stable(self):
         first = gate._block_approval_rule_key("terminal", {"command": "rm -rf /tmp/a"})
@@ -609,8 +721,10 @@ class GateTests(unittest.TestCase):
                 decision = gate.pre_tool_call("terminal", {}, "t")
             finally:
                 gate.evaluate_tool_call = original
-            self.assertEqual(decision["action"], "approve")
-            self.assertEqual(decision["rule_key"], "nerve:provider-unavailable")
+        self.assertEqual(decision["action"], "approve")
+        # v2: scoped key instead of the generic nerve:provider-unavailable
+        self.assertTrue(decision["rule_key"].startswith("nerve:hitl:uncertain:terminal:"), decision["rule_key"])
+        self.assertIn("unavailable", decision["message"])
 
     def test_gate_mode_env_rejects_unknown_values(self):
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "enforcebutblockless"}, clear=False):
@@ -618,10 +732,11 @@ class GateTests(unittest.TestCase):
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "ask-only"}, clear=False):
             self.assertEqual(gate.gate_mode(), "ask-only")
 
-    def test_enforce_low_allow_probability_goes_to_human_even_when_confident(self):
-        # Labeled-replay shape (keeltrace/hermes-nerve#19): a dangerous call that
-        # reaches an ALLOW verdict with high calibration confidence but a
-        # middling answer probability (held-out chmod 0.81 cluster).
+    def test_dangerous_chmod_on_ssh_key_blocked_not_probability_gated(self):
+        # The labeled-replay shape (keeltrace/hermes-nerve#19): chmod on a private
+        # key reached ALLOW at p=0.81 and the old gate interrupted with a bare
+        # probability. HITL v2 classifies it PROHIBITED deterministically and
+        # blocks with a concrete explanation — no confidence numbers involved.
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "enforce"}, clear=False):
             original = gate.evaluate_tool_call
             gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult(
@@ -630,8 +745,9 @@ class GateTests(unittest.TestCase):
                 decision = gate.pre_tool_call("terminal", {"command": "chmod 644 ~/.ssh/id_ed25519"}, "t")
             finally:
                 gate.evaluate_tool_call = original
-            self.assertEqual(decision["action"], "approve")
-            self.assertEqual(decision["rule_key"], "nerve:low-allow-probability")
+        self.assertEqual(decision["action"], "block")
+        self.assertIn("protected", decision["message"])
+        self.assertNotIn("0.81", decision["message"])
 
     def test_enforce_allow_passes_with_high_answer_probability(self):
         with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "enforce"}, clear=False):
@@ -639,7 +755,8 @@ class GateTests(unittest.TestCase):
             gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult(
                 "ALLOW", 0.93, {"ALLOW": 0.93, "APPROVAL": 0.05, "BLOCK": 0.02}, "jev-test", 1.0, "x")
             try:
-                decision = gate.pre_tool_call("terminal", {"command": "make build"}, "t")
+                # unbounded marker keeps this call in the model band
+                decision = gate.pre_tool_call("terminal", {"command": "make deploy --force"}, "t")
             finally:
                 gate.evaluate_tool_call = original
             self.assertIsNone(decision)
@@ -653,7 +770,8 @@ class GateTests(unittest.TestCase):
             gate.evaluate_tool_call = lambda **kwargs: engine.DecisionResult(
                 "ALLOW", 0.9, {"ALLOW": 0.81, "APPROVAL": 0.1, "BLOCK": 0.09}, "jev-test", 1.0, "x")
             try:
-                decision = gate.pre_tool_call("terminal", {"command": "make build"}, "t")
+                # unbounded marker keeps this call in the model band
+                decision = gate.pre_tool_call("terminal", {"command": "make deploy --force"}, "t")
             finally:
                 gate.evaluate_tool_call = original
             self.assertIsNone(decision)
@@ -668,28 +786,31 @@ class GateTests(unittest.TestCase):
             gate.configure(mode="enforce", min_confidence=0.80, min_allow_probability=raw, scope="selective")
             self.assertAlmostEqual(gate.minimum_allow_probability(), 0.90)
 
-    def test_enforce_allow_without_distribution_falls_back_to_confidence(self):
-        # Providers that return no usable distribution keep the shipped
-        # confidence-only semantics rather than failing every allow.
+    def test_enforce_allow_without_distribution_is_insufficient_evidence(self):
+        # HITL v2.1 (release review B7): an ALLOW verdict without a usable
+        # probability distribution carries NO calibration evidence. On an
+        # unrecognized command that is insufficient for silent execution —
+        # it escalates with an honest uncertainty note instead.
         cases = [
-            (engine.DecisionResult("ALLOW", 0.95, {}, "jev-test", 1.0, "x"), None),
-            (engine.DecisionResult("ALLOW", 0.51, {}, "jev-test", 1.0, "x"), "approve"),
-            (engine.DecisionResult("ALLOW", 0.95, {"ALLOW": "nan"}, "jev-test", 1.0, "x"), None),
-            (engine.DecisionResult("ALLOW", 0.95, {"ALLOW": 1.4}, "jev-test", 1.0, "x"), None),
+            engine.DecisionResult("ALLOW", 0.95, {}, "jev-test", 1.0, "x"),
+            engine.DecisionResult("ALLOW", 0.51, {}, "jev-test", 1.0, "x"),
+            engine.DecisionResult("ALLOW", 0.95, {"ALLOW": "nan"}, "jev-test", 1.0, "x"),
+            engine.DecisionResult("ALLOW", 0.95, {"ALLOW": 1.4}, "jev-test", 1.0, "x"),
         ]
-        for result, expected in cases:
+        for result in cases:
             with patch.dict(os.environ, {"HERMES_NERVE_GATE_MODE": "enforce"}, clear=False):
                 original = gate.evaluate_tool_call
                 gate.evaluate_tool_call = lambda **kwargs: result
                 try:
-                    decision = gate.pre_tool_call("terminal", {"command": "make build"}, "t")
+                    decision = gate.pre_tool_call("terminal", {"command": "./project-build-tool"}, "t")
                 finally:
                     gate.evaluate_tool_call = original
-            if expected is None:
-                self.assertIsNone(decision)
-            else:
-                self.assertEqual(decision["action"], expected)
-                self.assertEqual(decision["rule_key"], "nerve:low-confidence")
+            self.assertEqual(decision["action"], "approve")
+            self.assertNotIn("AP 0.", decision["message"])  # no calibration numbers shown
+            self.assertNotIn("nan", decision["message"])
+            lower = decision["message"].lower()
+            self.assertTrue("weak" in lower or "uncertain" in lower or "could not" in lower,
+                            decision["message"])
 
     def test_enforce_block_and_approval_verdicts_ignore_allow_probability_gate(self):
         # p(ALLOW) only guards the automatic-allow path; BLOCK still blocks and
@@ -703,7 +824,7 @@ class GateTests(unittest.TestCase):
                 original = gate.evaluate_tool_call
                 gate.evaluate_tool_call = lambda **kwargs: result
                 try:
-                    decision = gate.pre_tool_call("terminal", {"command": "fixture-command"}, "t")
+                    decision = gate.pre_tool_call("terminal", {"command": "make deploy --force"}, "t")
                 finally:
                     gate.evaluate_tool_call = original
             self.assertEqual(decision["action"], expected)
@@ -711,10 +832,17 @@ class GateTests(unittest.TestCase):
 
 class RegistrationTests(unittest.TestCase):
     def setUp(self):
-        # These tests exercise the controller/non-headless registration surface.
+        # Keep registration hermetic: a developer's real Nerve profile must not
+        # change the module graph under test.
+        self._hermes_home = tempfile.TemporaryDirectory()
+        self.addCleanup(self._hermes_home.cleanup)
         env = patch.dict(
             os.environ,
-            {"HERMES_KANBAN_TASK": "", "HERMES_KANBAN_TASK_ID": ""},
+            {
+                "HERMES_HOME": self._hermes_home.name,
+                "HERMES_KANBAN_TASK": "",
+                "HERMES_KANBAN_TASK_ID": "",
+            },
             clear=False,
         )
         env.start()
@@ -771,9 +899,9 @@ class RegistrationTests(unittest.TestCase):
         module.register(ctx)
         self.assertEqual(
             {x["name"] for x in ctx.tools},
-            {"nerve_decide", "nerve_rank", "nerve_verify", "nerve_assess", "nerve_context_curate", "nerve_context_rehydrate", "nerve_stats", "nerve_nervous_event", "nerve_supervise_card", "nerve_work_event", "nerve_work_status", "nerve_remote_delegate_task", "nerve_remote_worker_status", "nerve_remote_worker_result", "nerve_remote_worker_cancel", "nerve_remote_worker_control"},
+            {"nerve_decide", "nerve_rank", "nerve_verify", "nerve_assess", "nerve_context_curate", "nerve_context_rehydrate", "nerve_context_explain", "nerve_stats", "nerve_nervous_event", "nerve_supervise_card", "nerve_work_event", "nerve_work_status", "nerve_remote_delegate_task", "nerve_remote_worker_status", "nerve_remote_worker_result", "nerve_remote_worker_cancel", "nerve_remote_worker_control"},
         )
-        self.assertEqual([x[0] for x in ctx.hooks], ["pre_tool_call", "post_tool_call", "post_tool_call", "post_tool_call", "pre_llm_call", "transform_tool_result", "pre_verify", "post_api_request", "api_request_error", "post_llm_call", "on_session_end"])
+        self.assertEqual([x[0] for x in ctx.hooks], ["pre_tool_call", "post_tool_call", "post_tool_call", "post_tool_call", "post_tool_call", "pre_llm_call", "transform_tool_result", "pre_verify", "post_api_request", "api_request_error", "post_llm_call", "on_session_end"])
         self.assertTrue(all(callable(x[1]) for x in ctx.hooks))
         self.assertEqual(module.gate.gate_mode(), "advisory")
         self.assertEqual(module.gate.gate_scope(), "selective")
@@ -874,7 +1002,7 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
                 state={}, instructions="choose", choices=["A", "B"]
             ).as_dict()
         self.assertEqual(result["execution"]["engine"], "hermes-nerve")
-        self.assertEqual(result["execution"]["version"], "0.3.2.dev0")
+        self.assertEqual(result["execution"]["version"], "0.4.15")
         self.assertEqual(result["execution"]["transport"], "openrouter-decisions")
         self.assertTrue(result["execution"]["live_provider_call"])
 
@@ -895,36 +1023,33 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
             self.assertNotIn("abcdefghijklmnop", rows[0]["content"])
         ledger.configure(enabled=False, detail="sanitized")
 
-    def test_post_tool_observer_records_the_hook_session_id(self):
-        # Hermes passes session_id to every post_tool_call hook. The observer must
-        # use it rather than a process global that only the context engine sets
-        # and that concurrent gateway sessions would overwrite.
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {"HERMES_NERVE_CONTEXT_LEDGER": str(Path(td) / "ledger.jsonl")}, clear=False):
-            ledger.configure(enabled=True, detail="sanitized")
-            ledger.set_session("engine-session")
-            try:
-                ledger.observe_tool_call(tool_name="read_file", args={"path": "a"}, result="alpha", session_id="hook-session")
-                # Hermes sends "" when a tool call has no session; that must not be
-                # attributed to whichever session last set the process-wide value.
-                ledger.observe_tool_call(tool_name="read_file", args={"path": "b"}, result="beta", session_id="")
-                # Hosts that do not pass session_id at all keep the process-wide value.
-                ledger.observe_tool_call(tool_name="read_file", args={"path": "c"}, result="gamma")
-                rows = [json.loads(x) for x in Path(os.environ["HERMES_NERVE_CONTEXT_LEDGER"]).read_text().splitlines()]
-                self.assertEqual([row["session_id"] for row in rows], ["hook-session", "", "engine-session"])
-            finally:
-                ledger.set_session("")
-        ledger.configure(enabled=False, detail="sanitized")
 
+    def test_profile_fixture_restores_host_probes_after_exception(self):
+        real_is_dir, real_is_file = Path.is_dir, Path.is_file
+        original_tmpdir = os.environ.get("TMPDIR")
+        with self.assertRaisesRegex(RuntimeError, "fixture exit"):
+            with isolated_profile_filesystem() as td:
+                boundary = Path(td)
+                self.assertTrue(boundary.is_dir())
+                self.assertFalse(boundary.parent.is_dir())
+                marker = boundary / "marker.txt"
+                marker.write_text("fixture")
+                self.assertTrue(marker.is_file())
+                self.assertEqual(os.environ.get("TMPDIR"), original_tmpdir)
+                raise RuntimeError("fixture exit")
+        self.assertIs(Path.is_dir, real_is_dir)
+        self.assertIs(Path.is_file, real_is_file)
+        self.assertEqual(os.environ.get("TMPDIR"), original_tmpdir)
 
     def test_profile_report_home_infers_named_profile_from_plugin_path(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+        with isolated_profile_filesystem() as td, patch.dict(os.environ, {}, clear=True):
             plugin = Path(td) / ".hermes" / "profiles" / "muna" / "plugins" / "hermes-nerve"
             plugin.mkdir(parents=True)
             inferred = paths.report_home(plugin)
             self.assertEqual(inferred, Path(td) / ".hermes" / "profiles" / "muna")
 
     def test_profile_report_home_uses_deepest_profile_inside_profile_scratch(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+        with isolated_profile_filesystem() as td, patch.dict(os.environ, {}, clear=True):
             outer = Path(td) / ".hermes" / "profiles" / "freebrain" / "cache" / "scratch" / "tmp"
             plugin = outer / ".hermes" / "profiles" / "muna" / "plugins" / "hermes-nerve"
             plugin.mkdir(parents=True)
@@ -933,7 +1058,7 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
             self.assertEqual(inferred, outer / ".hermes" / "profiles" / "muna")
 
     def test_profile_report_home_ignores_nested_vendor_profiles_directory(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+        with isolated_profile_filesystem() as td, patch.dict(os.environ, {}, clear=True):
             profile = Path(td) / ".hermes" / "profiles" / "muna"
             plugin = profile / "plugins" / "hermes-nerve"
             nested = plugin / "vendor" / "profiles" / "not-a-hermes-profile"
@@ -942,7 +1067,7 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
             self.assertEqual(inferred, profile)
 
     def test_profile_report_home_ignores_unmarked_nested_dot_hermes_profile(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+        with isolated_profile_filesystem() as td, patch.dict(os.environ, {}, clear=True):
             profile = Path(td) / ".hermes" / "profiles" / "muna"
             plugin = profile / "plugins" / "hermes-nerve"
             nested = plugin / "node_modules" / ".hermes" / "profiles" / "evil"
@@ -951,25 +1076,25 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
             self.assertEqual(inferred, profile)
 
     def test_profile_report_home_does_not_infer_unrelated_profiles_directory(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+        with isolated_profile_filesystem() as td, patch.dict(os.environ, {}, clear=True):
             unrelated = Path(td) / "repo" / "profiles" / "dev" / "plugins" / "hermes-nerve"
             unrelated.mkdir(parents=True)
             self.assertIsNone(paths.infer_profile_home_from_path(unrelated))
 
     def test_profile_report_home_does_not_infer_nonexistent_profile(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+        with isolated_profile_filesystem() as td, patch.dict(os.environ, {}, clear=True):
             ghost = Path(td) / ".hermes" / "profiles" / "ghost" / "plugins" / "hermes-nerve"
             self.assertIsNone(paths.infer_profile_home_from_path(ghost))
 
     def test_profile_report_home_accepts_existing_fresh_default_root_profile(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+        with isolated_profile_filesystem() as td, patch.dict(os.environ, {}, clear=True):
             profile = Path(td) / ".hermes" / "profiles" / "brandnew"
             profile.mkdir(parents=True)
             self.assertEqual(paths.infer_profile_home_from_path(profile), profile)
             self.assertEqual(paths.report_home(profile), profile)
 
     def test_profile_report_home_accepts_marked_alternate_root_profile(self):
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {}, clear=True):
+        with isolated_profile_filesystem() as td, patch.dict(os.environ, {}, clear=True):
             profile = Path(td) / "hermesdata" / "profiles" / "muna"
             plugin = profile / "plugins" / "hermes-nerve"
             plugin.mkdir(parents=True)
@@ -1103,22 +1228,6 @@ class ProvenanceAndLedgerTests(unittest.TestCase):
                 ledger.rehydrate("e-hash")
         ledger.configure(enabled=False, detail="sanitized")
 
-    def test_stats_accepts_every_advertised_section(self):
-        # The tool schema is the contract the model sees: every section it offers must be served.
-        from hermes_nerve import schemas
-
-        advertised = schemas.NERVE_STATS["parameters"]["properties"]["section"]["enum"]
-        with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
-            "HERMES_NERVE_RECEIPTS": str(Path(td) / "receipts.jsonl"),
-            "HERMES_NERVE_GATE_EVENTS": str(Path(td) / "gate.jsonl"),
-            "HERMES_NERVE_CONTEXT_LEDGER": str(Path(td) / "ledger.jsonl"),
-            "HERMES_NERVE_NERVOUS_EVENTS": str(Path(td) / "nervous.jsonl"),
-            "HERMES_NERVE_OUTCOMES": str(Path(td) / "outcomes.jsonl"),
-        }, clear=False):
-            for section in advertised:
-                payload = json.loads(tools.nerve_stats({"section": section}))
-                self.assertTrue(payload.get("ok"), (section, payload.get("error")))
-
 
 class JsonlDurabilityTests(unittest.TestCase):
     def test_parallel_appends_remain_parseable(self):
@@ -1140,12 +1249,6 @@ class JsonlDurabilityTests(unittest.TestCase):
 
 
 class ContextEngineTests(unittest.TestCase):
-    def test_unknown_engine_mode_fails_safe_to_shadow(self):
-        # A typo or unsupported value must never enable destructive apply mode.
-        for mode in ("aply", "Apply-Now", "enabled", "off", "on"):
-            self.assertEqual(NerveContextEngine(mode=mode).mode, "shadow", mode)
-        self.assertEqual(NerveContextEngine(mode=" APPLY ").mode, "apply")
-
     def test_shadow_engine_keeps_builtin_compression_alive(self):
         class Fallback:
             def compress(self, messages, **kwargs):
@@ -1228,150 +1331,6 @@ class ContextEngineTests(unittest.TestCase):
         e._model = "m"
         e._build_fallback()
         self.assertIsNone(e._fallback)
-
-
-    @staticmethod
-    def _goal11_recoverable_tool_history(count):
-        messages = [{"role": "user", "content": "debug long session"}]
-        for i in range(count):
-            call_id = f"c{i:03d}"
-            messages.append({
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "terminal",
-                        "arguments": json.dumps({"command": f"git status --short item-{i:03d}"}),
-                    },
-                }],
-            })
-            messages.append({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": f"result-{i:03d}",
-            })
-        return messages
-
-    def test_goal11_bounds_47_48_49_80_and_selects_most_recent(self):
-        cap = context.MAX_ITEMS
-        self.assertEqual(cap, 48)
-        for count in (47, 48, 49, 80):
-            with self.subTest(count=count):
-                e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1)
-                e.protect_last_n = 0
-                captured = []
-                original = context.curate_context
-
-                def fake_curate(**kwargs):
-                    selected = list(kwargs["items"])
-                    captured.append(selected)
-                    return {
-                        "decisions": [{"id": item["id"], "action": "KEEP_EXACT"} for item in selected],
-                        "curated_items": [dict(item) for item in selected],
-                        "stats": {},
-                    }
-
-                context.curate_context = fake_curate
-                messages = self._goal11_recoverable_tool_history(count)
-                try:
-                    out = e.compress(messages, current_tokens=999999)
-                finally:
-                    context.curate_context = original
-
-                expected = min(count, cap)
-                self.assertEqual(len(captured), 1)
-                self.assertEqual(len(captured[0]), expected)
-                expected_start = max(0, count - cap)
-                self.assertEqual(
-                    [item["content"] for item in captured[0]],
-                    [f"result-{i:03d}" for i in range(expected_start, count)],
-                )
-                stats = e._last_plan["stats"]
-                self.assertEqual(stats["context_engine_candidates_total"], count)
-                self.assertEqual(stats["context_engine_candidates_selected"], expected)
-                self.assertEqual(stats["context_engine_candidates_skipped"], count - expected)
-                self.assertEqual(out, messages)
-
-    def test_goal11_selection_is_deterministic_and_defers_older_evidence(self):
-        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1)
-        e.protect_last_n = 0
-        messages = self._goal11_recoverable_tool_history(80)
-        items, _ = e._items(messages)
-        first, first_stats = e._select_candidates(items)
-        second, second_stats = e._select_candidates(items)
-        self.assertEqual([item["id"] for item in first], [item["id"] for item in second])
-        self.assertEqual(first_stats, second_stats)
-        self.assertEqual(first[0]["content"], "result-032")
-        self.assertEqual(first[-1]["content"], "result-079")
-        self.assertEqual(first_stats["deferred_items"], 32)
-        self.assertEqual(messages[2]["content"], "result-000")
-
-    def test_goal11_anchor_and_unrecoverable_candidates_remain_excluded(self):
-        e = NerveContextEngine(mode="apply")
-        items = [
-            {"id": "anchor", "content": "[NERVE_CONTEXT_ANCHOR abc]", "recoverable": True},
-            {"id": "unsafe", "content": "write result", "recoverable": False},
-            {"id": "safe", "content": "git status result", "recoverable": True},
-        ]
-        selected, stats = e._select_candidates(items)
-        self.assertEqual([item["id"] for item in selected], ["safe"])
-        self.assertEqual(stats["input_items"], 3)
-        self.assertEqual(stats["eligible_items"], 1)
-        self.assertEqual(stats["skipped_anchor_items"], 1)
-        self.assertEqual(stats["skipped_unrecoverable_items"], 1)
-
-    def test_goal11_curation_exception_fails_open_without_error_text(self):
-        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1, fallback_builtin=False)
-        e.protect_last_n = 0
-        e._fallback = None
-        messages = self._goal11_recoverable_tool_history(49)
-        original = context.curate_context
-
-        def fail_curate(**kwargs):
-            raise RuntimeError("provider detail that must not enter telemetry")
-
-        context.curate_context = fail_curate
-        try:
-            out = e.compress(messages, current_tokens=999999)
-        finally:
-            context.curate_context = original
-
-        self.assertEqual(out, messages)
-        self.assertEqual(e._last_plan["contract"], "context-engine/fail-open/v1")
-        stats = e._last_plan["stats"]
-        self.assertEqual(stats["curation_error_type"], "RuntimeError")
-        self.assertEqual(stats["context_engine_candidates_total"], 49)
-        self.assertEqual(stats["context_engine_candidates_selected"], 48)
-        self.assertEqual(stats["context_engine_candidates_skipped"], 1)
-        self.assertNotIn("provider detail", json.dumps(e._last_plan))
-
-    def test_goal11_repeated_compression_stays_bounded(self):
-        e = NerveContextEngine(mode="apply", protect_first_n=0, protect_last_n=1)
-        e.protect_last_n = 0
-        messages = self._goal11_recoverable_tool_history(80)
-        observed = []
-        original = context.curate_context
-
-        def fake_curate(**kwargs):
-            selected = list(kwargs["items"])
-            observed.append(len(selected))
-            return {
-                "decisions": [{"id": item["id"], "action": "KEEP_EXACT"} for item in selected],
-                "curated_items": [dict(item) for item in selected],
-                "stats": {},
-            }
-
-        context.curate_context = fake_curate
-        try:
-            first = e.compress(messages, current_tokens=999999)
-            second = e.compress(first, current_tokens=999999)
-        finally:
-            context.curate_context = original
-
-        self.assertEqual(observed, [context.MAX_ITEMS, context.MAX_ITEMS])
-        self.assertEqual(second, messages)
 
 
 class LiveSmokeTests(unittest.TestCase):

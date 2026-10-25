@@ -125,7 +125,7 @@ def build_agent(*, model: str, subfolder: str, device: str | None):
     try:
         import laya
     except ImportError as exc:
-        raise SystemExit("Laya is not installed. Install the optional sidecar dependencies with: pip install 'laya==0.3.3'") from exc
+        raise SystemExit("Laya is not installed. Install the optional sidecar dependencies with: pip install 'laya==0.3.29'") from exc
     kwargs = {"device": device or None}
     if subfolder:
         kwargs["subfolder"] = subfolder

@@ -28,7 +28,7 @@ class ModuleAbsenceTests(unittest.TestCase):
         mod,ctx=self.register("lean")
         self.assertIn("nerve_decide",ctx.tools); self.assertIn("nerve_supervise_card",ctx.tools); self.assertIn("nerve_nervous_event",ctx.tools)
         self.assertNotIn("nerve_rank",ctx.tools); self.assertNotIn("nerve_verify",ctx.tools); self.assertNotIn("nerve_assess",ctx.tools)
-        self.assertNotIn("nerve_context_curate",ctx.tools); self.assertNotIn("nerve_remote_delegate_task",ctx.tools); self.assertNotIn("nerve_assistant",ctx.tools)
+        self.assertNotIn("nerve_context_curate",ctx.tools); self.assertNotIn("nerve_context_explain",ctx.tools); self.assertNotIn("nerve_remote_delegate_task",ctx.tools); self.assertNotIn("nerve_assistant",ctx.tools)
         self.assertIsNone(ctx.engine)
         self.assertFalse(any(cb is mod.ledger.observe_tool_call for _,cb in ctx.hooks))
         self.assertFalse(any(cb is mod.gate.pre_tool_call for _,cb in ctx.hooks))
@@ -72,7 +72,7 @@ class ModuleAbsenceTests(unittest.TestCase):
 
     def test_operator_removes_factory_and_remote_surfaces(self):
         _,ctx=self.register("operator")
-        self.assertIn("nerve_context_curate",ctx.tools); self.assertIn("nerve_nervous_event",ctx.tools)
+        self.assertIn("nerve_context_curate",ctx.tools); self.assertIn("nerve_context_explain",ctx.tools); self.assertIn("nerve_nervous_event",ctx.tools)
         self.assertNotIn("nerve_supervise_card",ctx.tools); self.assertNotIn("nerve_remote_delegate_task",ctx.tools); self.assertNotIn("nerve_assistant",ctx.tools)
         names={n for n,_ in ctx.hooks}; self.assertNotIn("post_api_request",names); self.assertNotIn("api_request_error",names); self.assertIsNotNone(ctx.engine)
 
@@ -102,7 +102,7 @@ class ModuleAbsenceTests(unittest.TestCase):
 
     def test_explicit_module_override_wins(self):
         _,ctx=self.register("lean",{"nerve_modules":{"context_governor":True}})
-        self.assertIn("nerve_context_curate",ctx.tools); self.assertIsNotNone(ctx.engine)
+        self.assertIn("nerve_context_curate",ctx.tools); self.assertIn("nerve_context_explain",ctx.tools); self.assertIsNotNone(ctx.engine)
 
     def test_assistant_loops_keep_shared_event_transport_when_nervous_is_off(self):
         _,ctx=self.register("lean",{"nerve_modules":{"nervous":False,"assistant_loops":True}})
@@ -149,3 +149,24 @@ class ModuleAbsenceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,"disabled"):
                 runtime.supervisor()
             self.assertFalse(db.exists())
+
+    def test_profile_switch_changes_registered_features(self):
+        """Phase 7 profile switching at activation level: re-registering the
+        plugin after a profile change must produce a different feature
+        surface, driven by the saved sidecar (the single authority)."""
+        td=tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
+        env=patch.dict(os.environ,{"HERMES_HOME":td.name,"HERMES_KANBAN_TASK":"","HERMES_KANBAN_TASK_ID":""},clear=False); env.start(); self.addCleanup(env.stop)
+        mod=load_plugin()
+        ctx1=Ctx(Path(td.name),{"nerve_profile":"operator"}); mod.register(ctx1)
+        self.assertIn("nerve_context_curate",ctx1.tools)
+        self.assertNotIn("nerve_supervise_card",ctx1.tools)
+        from hermes_nerve.profiles import save_profile
+        save_profile({"version":1,"nerve_profile":"fat_cat","nerve_modules":{},"advanced":{}},Path(td.name))
+        ctx2=Ctx(Path(td.name),{}); mod.register(ctx2)
+        self.assertIn("nerve_supervise_card",ctx2.tools)
+        self.assertNotIn("nerve_assistant",ctx2.tools)
+        # And back: operator sidecar removes the supervision surface again.
+        save_profile({"version":1,"nerve_profile":"operator","nerve_modules":{},"advanced":{}},Path(td.name))
+        ctx3=Ctx(Path(td.name),{}); mod.register(ctx3)
+        self.assertNotIn("nerve_supervise_card",ctx3.tools)
+        self.assertIn("nerve_context_curate",ctx3.tools)

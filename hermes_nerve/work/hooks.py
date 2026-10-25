@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 from contextvars import ContextVar
 from types import SimpleNamespace
@@ -217,9 +218,12 @@ def _native_dispatch_succeeded(result: Any) -> tuple[bool, str]:
             return False, text
 
     low = text.lower()
+    # Reject negated/error-laden "completed" forms before any success check.
+    if re.search(r"\b(?:not|never|wasn't|was not|failed to|could not|unable to|did not|didn't)\b[^.]{0,60}\bcompleted\b", low):
+        return False, text
     if any(token in low for token in ("tool_error", '"error"', "could not complete", "refused:", "failed", "not allowed")):
         return False, text
-    if any(token in low for token in ('"ok": true', '"ok":true', "status=done", "status: done", "completed")):
+    if any(token in low for token in ('"ok": true', '"ok":true', "status=done", "status: done")):
         return True, text
     return False, text
 
@@ -299,6 +303,28 @@ def _complete_verified_run(sup, identity, proposal: dict[str, Any], verdict, *, 
             _set_terminal_lifecycle(sup, identity, verdict, "COMPLETED", attempts=number, last_result=text)
             return True, text
     _set_terminal_lifecycle(sup, identity, verdict, "COMPLETION_RETRY", attempts=total, last_result=last)
+    # N-23/N-24: exhausted completion retries convert the burn into ONE
+    # escalation receipt (evidence card for the human reviewer lane) instead of
+    # re-entering the lifecycle loop.
+    try:
+        from .block_review import stage_for_jev, BlockReview
+        review = BlockReview(
+            verdict="ESCALATE",
+            card={
+                "task_id": identity.task_id,
+                "run_id": identity.run_id,
+                "block_reason": f"Completion rejected {total}x by the goal-mode judge; controller retries exhausted.",
+                "judge_feedback": str(last)[:2000],
+                "variants_tried": None,
+                "budget_fraction_consumed": None,
+                "claim_checks": [],
+                "refuted_claims": [],
+                "semantic_laziness_flags": ["completion-retries-exhausted"],
+            },
+        )
+        stage_for_jev(sup.store, identity, review)
+    except Exception:
+        pass
     return False, last
 
 
@@ -325,7 +351,8 @@ def _owns_kanban_terminal_authority() -> bool:
     try:
         return bool(is_dispatcher_owned_worker_context())
     except Exception:
-        return True
+        # Failure to resolve identity is not proof of dispatcher authority.
+        return False
 
 
 def _identity(task_id: str | None = None, *, session_id: str = ""):
@@ -489,6 +516,33 @@ def pre_tool_call(tool_name: str, args: dict, task_id: str | None = None, sessio
     # lifecycle attempts remain fenced below.
     if name == "kanban_complete" and bool(_CONTROLLER_COMPLETION_DISPATCH.get()):
         return None
+
+    # N-23: a worker block is never terminally accepted on prose. The
+    # deterministic judge refutes lazy/premature surrenders with a work order
+    # (bounce) and only lets honest unavoidable blocks through with a staged
+    # evidence card for the reviewer lane. Fail-open on judge errors.
+    if name == "kanban_block":
+        try:
+            from .block_review import review_block, stage_for_jev, bounce_message
+            review = review_block(sup, identity, reason=str((args or {}).get("reason") or ""))
+            stage_for_jev(sup.store, identity, review)
+            sup.store.add_diagnostic(
+                task_id=identity.task_id, run_id=identity.run_id,
+                kind="nerve_block_review_ran",
+                payload={"verdict": review.verdict, "reasons": review.reasons, "review_count": review.prior_reviews + 1},
+                created_at=utc_now(),
+            )
+            if review.bounce:
+                return bounce_message(review)
+        except Exception as exc:
+            try:
+                sup.store.add_diagnostic(
+                    task_id=identity.task_id, run_id=identity.run_id,
+                    kind="nerve_block_review_failed",
+                    payload={"error": f"{type(exc).__name__}: {exc}"}, created_at=utc_now(),
+                )
+            except Exception:
+                pass
 
     bypass_reason = _kanban_authority_bypass(name, args or {})
     completion_intent = _worker_completion_intent(name, args or {})

@@ -18,6 +18,8 @@ import contextvars
 import json
 import os
 import queue
+import re
+import unicodedata
 import threading
 import time
 import uuid
@@ -28,10 +30,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .engine import DecisionEngine
+from . import experience
 from .jsonl import append_jsonl
 from .outcomes import HistoricalOutcomeModel, OutcomeStore
 from .paths import hermes_home
 from .privacy import canonical_hash, redact
+from .policy_memory import PolicyMemory, tool_wide_policy_reason
 from .provenance import execution_provenance
 from .progress_integrity import (
     change_required as progress_change_required,
@@ -41,6 +45,7 @@ from .progress_integrity import (
     mutation_is_relevant,
     requested_paths as progress_requested_paths,
     test_succeeded,
+    test_result_masked,
     tool_kind,
     verification_required as progress_verification_required,
 )
@@ -53,6 +58,46 @@ from .router import (
 )
 
 ADMISSION_CHOICES = ["OFF", "WATCH", "ON"]
+_ADMISSION_RANK = {"OFF": 0, "WATCH": 1, "ON": 2}
+# Deterministic risk floor: prompts naming consequential operations are never
+# admitted below WATCH, whatever the provider says or if the provider fails.
+# The floor can only raise admission; it never lowers a provider decision.
+_ADMISSION_RISK_PATTERNS = tuple(re.compile(p, re.IGNORECASE) for p in (
+    r"\bdeploy(s|ed|ing|ment)?\b|\bship\b.{0,20}\b(live|prod)",
+    r"\bproduction\b|\bprod\b|\blive (site|server|database|db|cluster|environment)\b",
+    r"\b(delete|remove|purge|wipe|erase|nuke|shred|destroy|obliterate|unlink|truncate)\b",
+    r"\bdrop\s+(table|database|schema|collection|index)\b",
+    r"\brm\s+(-[a-z]*[rf]|--recursive|--force)",
+    r"\b(rotate|revoke|change|reset)\b.{0,40}\b(key|token|secret|credential|password)s?\b",
+    r"\b(migrat(e|ion)|rollback|roll back|restore)\b",
+    r"\bforce[- ]push|git\s+push\b.*(\s-f\b|--force|\s\+\S)|reset\s+--hard",
+    r"\b(terraform|pulumi)\s+(apply|destroy)|\bkubectl\s+(apply|delete|drain)|\bhelm\s+(install|upgrade|uninstall)",
+    r"\b(systemctl|service)\s+(stop|restart|disable|mask)|\bdocker\s+(compose\s+down|rm|system\s+prune|volume\s+rm)|\bshutdown\b|\breboot\b",
+    r"\bmkfs\b|\bdd\s+if=|\bfdisk\b|\bformat\b.{0,20}\b(disk|drive|partition)",
+    r"\bchmod\s+(-R\s+)?[0-7]*7[0-7]{0,2}\s+/|\bchown\s+-R\b",
+    r"\b(overwrite|clobber)\b",
+    r"\bbase64\s+(-d|--decode)\b.*\|\s*(ba)?sh|\bcurl\b.*\|\s*(ba)?sh",
+    r"\b(pay|wire|transfer|refund|charge)\b.{0,40}(\$|\binvoice|\bpayment|\baccount|\bmoney|\bfunds)",
+    r"\b(send|email|post|publish|tweet|announce)\b.{0,40}\b(all|everyone|staff|customers|public|pypi|npm|release)\b",
+))
+# Fold common Cyrillic/Greek look-alikes so "dеlete" (Cyrillic e) cannot slip past.
+_CONFUSABLES = str.maketrans("аеорсухіјѕкмнтвАЕОРСУХІЈЅКМНТВοαεικνρτυχΟΑΕΙΚΝΡΤΥΧ", "aeopcyxijskmhtbAEOPCYXIJSKMHTBoaeiknptyxOAEIKNPTYX")
+
+
+def _fold_for_risk(text: str) -> str:
+    folded = unicodedata.normalize("NFKC", text).translate(_CONFUSABLES)
+    # Collapse letter-by-letter spacing such as "d-e-l-e-t-e" or "d e l e t e".
+    return re.sub(r"\b(?:\w[-_. ]){3,}\w\b", lambda m: re.sub(r"[-_. ]", "", m.group(0)), folded)
+
+
+def admission_risk_floor(prompt: str) -> str:
+    """Return the minimum admission level implied by deterministic risk markers ("" if none)."""
+    raw = str(prompt or "")
+    for text in (raw, _fold_for_risk(raw)):
+        for pattern in _ADMISSION_RISK_PATTERNS:
+            if pattern.search(text):
+                return "WATCH"
+    return ""
 CONTROL_CHOICES = ["CONTINUE", "GATHER_EVIDENCE", "RETRY", "REPLAN", "ESCALATE"]
 SUPERVISION_MODES = {"shadow", "correct_next", "precommit"}
 BLOCKING_CONTROLS = {"GATHER_EVIDENCE", "REPLAN", "ESCALATE"}
@@ -99,8 +144,12 @@ class NervousConfig:
     retain_recent_events: int = 64
     emit_prompt_hint: bool = False
     local_learning: bool = True
+    admission_risk_floor: bool = True
     local_learning_min_samples: int = 8
     repeated_failure_local_replan_at: int = 3
+    policy_memory_enabled: bool = True
+    policy_memory_ttl_seconds: int = 3600
+    policy_memory_path: str = ""
 
 
 @dataclass
@@ -226,7 +275,7 @@ class NervousSystem:
         self._lock = threading.RLock()
         self._turns: dict[str, TurnState] = {}
         self._session_turn: dict[str, str] = {}
-        self._tasks: queue.Queue[tuple[str, dict[str, Any], contextvars.Context]] = queue.Queue()
+        self._tasks: queue.Queue[tuple[str, dict[str, Any], contextvars.Context]] = queue.Queue(maxsize=128)
         self._worker: threading.Thread | None = None
         self._stopping = False
         self._metrics: Counter[str] = Counter()
@@ -235,6 +284,7 @@ class NervousSystem:
         self._recent_controls: deque[dict[str, Any]] = deque(maxlen=30)
         self._outcomes = OutcomeStore()
         self._historical_model = HistoricalOutcomeModel(self._outcomes, self._config.local_learning_min_samples)
+        self._policy_memory: PolicyMemory | None = None
 
     def configure(self, **kwargs: Any) -> None:
         with self._lock:
@@ -271,6 +321,8 @@ class NervousSystem:
                 cfg.emit_prompt_hint = bool(kwargs["emit_prompt_hint"])
             if "local_learning" in kwargs:
                 cfg.local_learning = bool(kwargs["local_learning"])
+            if "admission_risk_floor" in kwargs:
+                cfg.admission_risk_floor = bool(kwargs["admission_risk_floor"])
             if "local_learning_min_samples" in kwargs:
                 try:
                     cfg.local_learning_min_samples = max(3, min(1000, int(kwargs["local_learning_min_samples"])))
@@ -282,6 +334,23 @@ class NervousSystem:
                 except (TypeError, ValueError):
                     pass
             self._historical_model = HistoricalOutcomeModel(self._outcomes, cfg.local_learning_min_samples)
+            if "policy_memory_enabled" in kwargs:
+                cfg.policy_memory_enabled = bool(kwargs["policy_memory_enabled"])
+            if "policy_memory_ttl_seconds" in kwargs:
+                try:
+                    cfg.policy_memory_ttl_seconds = max(0, min(86400, int(kwargs["policy_memory_ttl_seconds"])))
+                except (TypeError, ValueError):
+                    pass
+            if "policy_memory_path" in kwargs:
+                cfg.policy_memory_path = str(kwargs["policy_memory_path"] or "").strip()
+            self._policy_memory = (
+                PolicyMemory(
+                    path=Path(cfg.policy_memory_path).expanduser() if cfg.policy_memory_path else None,
+                    ttl_seconds=cfg.policy_memory_ttl_seconds,
+                )
+                if cfg.enabled and cfg.policy_memory_enabled
+                else None
+            )
         if self._config.enabled:
             self._ensure_worker()
         else:
@@ -305,6 +374,17 @@ class NervousSystem:
         with self._lock:
             if self._worker is worker and (worker is None or not worker.is_alive()):
                 self._worker = None
+
+    def _enqueue_task(self, kind: str, payload: dict[str, Any]) -> bool:
+        """Bound background work without ever blocking the serving hook."""
+        try:
+            self._tasks.put_nowait((kind, payload, contextvars.copy_context()))
+            return True
+        except queue.Full:
+            with self._lock:
+                self._metrics["queue_dropped"] += 1
+                self._metrics[f"queue_dropped_{kind}"] += 1
+            return False
 
     def _dispatch_task(self, kind: str, payload: dict[str, Any]) -> None:
         if kind == "admit":
@@ -379,7 +459,12 @@ class NervousSystem:
             self._metrics["turns_started"] += 1
         self._log("turn_start", {"turn_id": tid, "session_id": session_id, "prompt_sha256": state.user_message_hash})
         if self._config.admission_enabled:
-            self._tasks.put(("admit", {"turn_id": tid, "user_message": user_message}, contextvars.copy_context()))
+            if not self._enqueue_task("admit", {"turn_id": tid, "user_message": user_message}):
+                # Keep local supervision active; this is not a tool permission grant.
+                with self._lock:
+                    state.admission = "ON"
+                    self._metrics["admission_on"] += 1
+                    self._metrics["admission_queue_fallback"] += 1
         else:
             with self._lock:
                 state.admission = "ON"
@@ -393,8 +478,56 @@ class NervousSystem:
             if state is None or state.finished:
                 return
         prompt = str(payload.get("user_message") or "")
-        engine = self._engine_factory()
-        result = engine.decide(
+        floor = admission_risk_floor(prompt) if self._config.admission_risk_floor else ""
+        try:
+            # Engine construction is inside the guard: a missing key or invalid
+            # endpoint is a provider failure and must still honour the floor.
+            engine = self._engine_factory()
+            result = self._admission_decide(engine, prompt)
+        except Exception as exc:
+            # Provider failure must not silently disable supervision for risky turns.
+            if floor:
+                with self._lock:
+                    state = self._turns.get(tid)
+                    if state is not None and not state.finished and state.admission == "PENDING":
+                        state.admission = floor
+                        self._metrics["admission_floor_fallback"] += 1
+                self._log("admission_floor_fallback", {"turn_id": tid, "admission": floor, "error": str(exc)[:300]})
+            raise
+        provider_value = result.value
+        value = provider_value
+        if floor and _ADMISSION_RANK.get(floor, 0) > _ADMISSION_RANK.get(provider_value, 0):
+            value = floor
+        with self._lock:
+            state = self._turns.get(tid)
+            if state is None or state.finished:
+                return
+            state.admission = value
+            state.admission_confidence = result.confidence
+            state.admission_probabilities = dict(result.probabilities)
+            state.provider_calls += 1
+            self._metrics["provider_calls"] += 1
+            self._metrics["provider_calls_origin_turn_admission"] += 1
+            self._metrics["admission_provider_calls"] += 1
+            self._metrics[f"admission_{value.lower()}"] += 1
+            if value != provider_value:
+                self._metrics["admission_floor_raised"] += 1
+        record = {
+            "turn_id": tid,
+            "admission": value,
+            "confidence": result.confidence,
+            "probabilities": result.probabilities,
+            "request_id": result.request_id,
+            "latency_ms": result.latency_ms,
+        }
+        if value != provider_value:
+            record["provider_admission"] = provider_value
+            record["floor"] = floor
+        self._log("turn_admission", record)
+
+    @staticmethod
+    def _admission_decide(engine: Any, prompt: str) -> Any:
+        return engine.decide(
             state={"user_prompt": prompt[:12000]},
             instructions=(
                 "Classify whether this Hermes turn contains or is likely to develop an accountable decision plane. "
@@ -411,26 +544,6 @@ class NervousSystem:
             },
             contract="hermes/nerve-turn-admission/v1",
         )
-        with self._lock:
-            state = self._turns.get(tid)
-            if state is None or state.finished:
-                return
-            state.admission = result.value
-            state.admission_confidence = result.confidence
-            state.admission_probabilities = dict(result.probabilities)
-            state.provider_calls += 1
-            self._metrics["provider_calls"] += 1
-            self._metrics["provider_calls_origin_turn_admission"] += 1
-            self._metrics["admission_provider_calls"] += 1
-            self._metrics[f"admission_{result.value.lower()}"] += 1
-        self._log("turn_admission", {
-            "turn_id": tid,
-            "admission": result.value,
-            "confidence": result.confidence,
-            "probabilities": result.probabilities,
-            "request_id": result.request_id,
-            "latency_ms": result.latency_ms,
-        })
 
     @staticmethod
     def _lease_invalidation_reason(event: dict[str, Any]) -> str:
@@ -538,6 +651,26 @@ class NervousSystem:
             "failure_repeat_count": episode.count,
             "stale": False,
         })
+        if experience.enabled() and episode.last_event_id:
+            try:
+                experience.default_store().create_claim(
+                    subject=f"failure:{episode.fingerprint}",
+                    statement=f"Retrying action {episode.action_fingerprint or 'unchanged-action'} is disproven for this failure: {reason}",
+                    claim_type="disproven",
+                    evidence_ids=[episode.last_event_id],
+                    confidence=1.0,
+                    polarity=-1,
+                    provenance={
+                        "decision_id": decision_id,
+                        "source": source,
+                        "failure_fingerprint": episode.fingerprint,
+                        "failure_repeat_count": episode.count,
+                    },
+                    tags=["negative-knowledge", "failure-fingerprint", decision_type.lower()],
+                    admit=False,
+                )
+            except Exception:
+                pass
         self._activate_control(state, directive)
         challenge = Challenge(
             challenge_id=uuid.uuid4().hex,
@@ -674,6 +807,34 @@ class NervousSystem:
                 self._metrics["nerve_internal_suppressed"] += 1
         if clean["type"] in {"OUTCOME", "CHALLENGE_OUTCOME"}:
             self._outcomes.append({"record_type": "outcome", **clean})
+            if experience.enabled():
+                claim_id = str(clean.get("claim_id") or "").strip()
+                if claim_id and "successful" in clean:
+                    try:
+                        experience.default_store().record_outcome(
+                            claim_id,
+                            successful=bool(clean.get("successful")),
+                            decision_id=str(clean.get("decision_id") or ""),
+                            receipt_id=str(clean.get("receipt_id") or ""),
+                            tokens_saved=int(clean.get("tokens_saved") or 0),
+                            note=str(clean.get("summary") or clean.get("outcome") or ""),
+                        )
+                    except Exception:
+                        pass
+                fingerprint = str(clean.get("failure_fingerprint") or "").strip()
+                recovery = str(clean.get("recovery") or clean.get("next_action") or "").strip()
+                if fingerprint and recovery and "successful" in clean:
+                    try:
+                        experience.default_store().record_recovery(
+                            fingerprint=fingerprint,
+                            recovery=recovery,
+                            successful=bool(clean.get("successful")),
+                            evidence_ids=[str(clean.get("event_id") or "")],
+                            scope=clean.get("scope") if isinstance(clean.get("scope"), dict) else None,
+                            tokens_saved=int(clean.get("tokens_saved") or 0),
+                        )
+                    except Exception:
+                        pass
             self._metrics["outcomes_recorded"] += 1
             self._log("outcome", clean)
             return {"accepted": True, "forwarded": False, "reason": "outcome-recorded"}
@@ -785,7 +946,18 @@ class NervousSystem:
                 if episode:
                     episode.provider_evaluations += 1
 
-        self._tasks.put(("assess", {"turn_id": state.turn_id, "event": clean, "router": route.as_dict()}, contextvars.copy_context()))
+        if not self._enqueue_task("assess", {"turn_id": state.turn_id, "event": clean, "router": route.as_dict()}):
+            with self._lock:
+                state.assessment_inflight = False
+                state.events_forwarded -= 1
+                state.events_suppressed += 1
+                self._metrics["events_forwarded"] -= 1
+                self._metrics["events_suppressed"] += 1
+                if clean.get("failure_fingerprint"):
+                    episode = state.failure_episodes.get(str(clean.get("failure_fingerprint")))
+                    if episode:
+                        episode.provider_evaluations -= 1
+            return {"accepted": True, "forwarded": False, "reason": "queue-saturated", "admission": admission, "router": route.as_dict()}
         return {"accepted": True, "forwarded": True, "admission": admission, "router": route.as_dict()}
 
     def observe_tool_call(self, **kwargs: Any) -> dict[str, Any]:
@@ -826,6 +998,7 @@ class NervousSystem:
         fail_fp = ""
         repeat_count = 0
         deterministic_reason = _deterministic_failure_reason(status, result, error_message) if is_failure else ""
+        policy_memory_reason = tool_wide_policy_reason(tool_name, status, result, error_message) if is_failure else ""
         env_failure = environment_failure(tool_name, args, status, result, error_message)
         state = self._resolve_turn(turn_id=str(kwargs.get("turn_id") or ""), session_id=str(kwargs.get("session_id") or ""))
         if state is not None:
@@ -836,7 +1009,8 @@ class NervousSystem:
                     state.mutation_attempts += 1
                     if mutation_is_relevant(tool_name, args, state.requested_paths):
                         state.relevant_mutation_attempts += 1
-                elif kind == "test" and test_succeeded(status, result, error_message):
+                elif (kind == "test" and test_succeeded(status, result, error_message)
+                      and not test_result_masked(str((args or {}).get("command") or ""))):
                     state.verified_test_passes += 1
                 if (
                     state.change_required
@@ -886,11 +1060,25 @@ class NervousSystem:
                     self._activate_deterministic_failure_replan(state, episode, deterministic_reason)
                 elif repeat_count >= self._config.repeated_failure_local_replan_at:
                     self._activate_local_loop_breaker(state, episode)
-                if env_failure and action_fp not in state.environment_failure_actions:
-                    state.environment_failure_actions.append(action_fp)
-                    self._metrics["environment_toolchain_failures"] += 1
-                    if len(state.environment_failure_actions) >= 2:
-                        self._activate_environment_thrash_replan(state, event_id)
+            active_blocking = (
+                state.active_control is not None
+                and state.active_control.control in BLOCKING_CONTROLS
+            )
+            if env_failure and action_fp not in state.environment_failure_actions:
+                state.environment_failure_actions.append(action_fp)
+                self._metrics["environment_toolchain_failures"] += 1
+                if len(state.environment_failure_actions) >= 2:
+                    self._activate_environment_thrash_replan(state, event_id)
+            if (policy_memory_reason and repeat_count == 1
+                    and self._policy_memory is not None and not active_blocking):
+                remembered = self._policy_memory.remember(
+                    tool_name=tool_name,
+                    reason=policy_memory_reason,
+                    evidence_fingerprint=fail_fp or action_fp,
+                )
+                if remembered is not None:
+                    with self._lock:
+                        self._metrics["policy_memory_records"] += 1
             if repeat_count >= 2:
                 event_type = "REPEATED_FAILURE"
 
@@ -952,6 +1140,35 @@ class NervousSystem:
         state = self._resolve_turn(turn_id=str(kwargs.get("turn_id") or ""), session_id=str(kwargs.get("session_id") or ""))
         if state is None:
             return None
+        # Round-6 (N-25): runtime-wide unattended tool-policy memory. Only
+        # proven whole-tool blocks are remembered (short TTL, keyed by mode and
+        # config); an approval-gated terminal command can never teach a ban on
+        # all terminal use. De-confliction (review item 4): an ACTIVE control
+        # directive (environment-thrash, progress guard, ...) always takes
+        # precedence over a policy-memory ban.
+        memory = (
+            self._policy_memory.blocked(tool_name)
+            if self._policy_memory is not None and state.active_control is None
+            else None
+        )
+        if memory is not None:
+            with self._lock:
+                self._metrics["policy_memory_prevented_calls"] += 1
+                self._metrics["policy_memory_hits"] += 1
+            self._log("policy_memory_enforced", {
+                "tool_name": tool_name,
+                "reason": memory.reason,
+                "evidence_fingerprint": memory.evidence_fingerprint,
+                "expires_at_epoch": memory.expires_at_epoch,
+            })
+            return {
+                "action": "block",
+                "message": (
+                    f"[NERVE_POLICY_MEMORY] Nerve policy memory prevents {tool_name} in this Hermes execution mode because the tool previously "
+                    "hit a deterministic unattended-policy block. Use a different allowed tool. The memory expires "
+                    "automatically when the execution mode/config changes or its TTL elapses."
+                ),
+            }
         proposed_fp = tool_action_fingerprint(tool_name, args)
         with self._lock:
             directive = state.active_control
@@ -1386,7 +1603,13 @@ class NervousSystem:
                 "requested_paths": list(state.requested_paths),
                 "changed_paths": changed_paths,
                 "reason": reason,
+                "shadow": self._config.mode == "shadow",
             })
+            if self._config.mode == "shadow":
+                # Shadow mode observes only: record the would-be block, never steer the turn.
+                with self._lock:
+                    self._metrics["progress_completion_block_shadowed"] += 1
+                return None
             return {
                 "action": "continue",
                 "message": (

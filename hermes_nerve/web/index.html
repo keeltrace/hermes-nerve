@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Configure and install Nerve for Hermes, locally and without a cloud account.">
+  <title>Nerve | Control Panel</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <header class="global-header">
+    <div class="logo" aria-label="Nerve Control Panel">
+      <span class="brand-glyph" aria-hidden="true"><span></span></span>
+      <span><strong>NERVE</strong><small>CONTROL PANEL</small></span>
+    </div>
+    <div class="global-right">
+      <span class="status-led"><span class="led"></span> LOCAL CONNECTION</span>
+      <button class="header-diagnostics" type="button" id="advanced-shortcut" aria-pressed="false">Advanced</button>
+      <button class="header-diagnostics" type="button" id="diagnostics-shortcut">Diagnostics</button>
+      <span class="version" id="version">v…</span>
+      <span class="version" id="runtime-identity" title="Nerve runtime identity">identity…</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="rail">
+      <div class="rail-heading">SETUP SEQUENCE <span>01 / 04</span></div>
+      <nav aria-label="Setup steps" id="steps">
+        <button class="rail-step current" data-step="0"><span class="step-n">01</span><span><b>Choose profile</b><small>How Nerve behaves</small></span></button>
+        <button class="rail-step" data-step="1"><span class="step-n">02</span><span><b>Features</b><small>Pick what runs</small></span></button>
+        <button class="rail-step" data-step="2"><span class="step-n">03</span><span><b>Connect Reflex</b><small>Select decision engine</small></span></button>
+        <button class="rail-step" data-step="3"><span class="step-n">04</span><span><b>Review &amp; apply</b><small>Nothing changes until you confirm</small></span></button>
+      </nav>
+      <div class="rail-bottom">
+        <div class="rail-heading">SYSTEM</div>
+        <div class="system-row"><span>Hermes CLI</span><span id="hermes-health" class="muted">Checking</span></div>
+        <div class="system-row"><span>Nerve plugin</span><span id="plugin-health" class="muted">Checking</span></div>
+        <div class="system-row"><span>Active runtime</span><span class="muted">Not verified</span></div>
+        <button class="rail-link" id="diagnostics-button">Diagnostics &amp; install <span aria-hidden="true">↗</span></button>
+          <div class="operator-toggle">
+            <label for="advanced-switch">Advanced controls</label>
+            <input id="advanced-switch" type="checkbox" role="switch">
+          </div>
+      </div>
+    </aside>
+
+    <main class="stage">
+      <div class="top-line">
+        <div class="eyebrow"><span class="tiny-led" aria-hidden="true"></span> SYSTEM CONFIGURATION <span id="progress">STEP 01 / 04</span></div>
+        <span class="chip">LOCAL ONLY</span>
+      </div>
+      <div id="messages" role="status" aria-live="polite"></div>
+      <section id="content" aria-live="polite">
+        <div class="loading">Reading your Nerve installation…</div>
+      </section>
+      <div class="action-bar" id="action-bar">
+        <button class="btn secondary" id="back" type="button">Back</button>
+        <div class="bar-note" id="bar-note">No changes have been made.</div>
+        <button class="btn primary" id="next" type="button">Continue <span aria-hidden="true">→</span></button>
+      </div>
+    </main>
+
+    <aside class="signal">
+      <div class="signal-head">SYSTEM READOUT <span class="pulsing-led"></span></div>
+      <div class="signal-visual" aria-hidden="true">
+        <div class="signal-lines">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="signal-caption">VISUAL INDICATOR · NOT LIVE TELEMETRY</div>
+      </div>
+      <div class="readout-row"><span>CONFIGURED PROFILE</span><strong id="readout-profile">—</strong></div>
+      <div class="readout-row"><span>SELECTED FEATURES</span><strong id="readout-modules">—</strong></div>
+      <div class="readout-row"><span>REFLEX ROUTE</span><strong id="readout-backend">—</strong></div>
+      <div class="readout-row"><span>PENDING CHANGES</span><strong id="readout-dirty">NONE</strong></div>
+      <div class="safety-note"><span class="lock" aria-hidden="true">◇</span><p>Changes stay on this machine. Existing settings are backed up before you apply. Hermes must restart to load saved changes.</p></div>
+    </aside>
+  </div>
+  <footer class="footer">
+    <span>WHEN JEV STRIKES A NERVE</span>
+    <span>Built for Hermes · Zero cloud UI dependencies</span>
+  </footer>
+</body>
+</html>

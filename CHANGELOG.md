@@ -1,14 +1,303 @@
-# Changelog
+## 0.4.15 — October 25, 2026
 
-## Unreleased — 0.3.2.dev0
+- Fixed the Nerve-only packaging metadata that caused normal Hermes updates
+  to disable Nerve across profiles: optional Laya/Torch dependencies are kept
+  in explicit isolated model sidecars, not the shared Hermes uv workspace.
+- Updated release-verifier tests and developer guidance to forbid all
+  installable Nerve dependency extras/groups during normal Hermes updates.
+- Full Configuration now displays every registered Nerve module, including
+  disabled ones, so operators can enable them without opening Advanced.
+- Removed the false-positive progress-integrity file target for bare dotted
+  version ranges such as Python 3.10-3.14, while preserving explicit file paths.
+- Added a portable, private-path-free replay of the KEE-804 heartbeat guard from PR #59.
+- Incorporated @rharmanca's PR #73 verification hardening: additional test
+  runners, whole-word failure detection, and rejection of masked success exits.
+- Preserved v0.4.14 publication as an immutable, older release. Context Bus
+  code inclusion is authorized by the owner, and contributor credits remain.
+- See PR #75 for the release acceptance ledger. Native upgrade/rollback
+  and real post-update profile re-enablement still require validation before
+  declaring installed rollout complete.
 
-- Mark current `main` as the post-release development line instead of reporting itself as `0.3.0` or as the separate `v0.3.1rc1` maintenance snapshot.
-- Keep `packaging/hermes-catalog/nerve.yaml` pinned to the latest stable `0.3.0` while `main` carries a `.dev` runtime/package version, matching the repository's CI-enforced development-catalog boundary.
-- Carry the ask-only Action Gate mode and its action-specific approval/environment-fallback hardening from #41/#44.
-- Bound long-session context curation to the most-recent 48 eligible evidence items, with deterministic deferral and fail-open telemetry (#48).
-- Re-evaluate machine-checkable Definition-of-Done criteria against current workspace state on every completion attempt so stale PASS verdicts cannot survive later regressions (#49).
-- Reconcile deterministic retry-loop suppression and task-relative progress/environment-thrash hardening onto clean `main` ancestry (#50).
-- Keep `v0.3.1rc1` immutable as a maintenance-only release candidate that intentionally excludes ask-only. Feature tracks #37, #38, and #40 remain separate from this development baseline.
+## Unreleased — normal Hermes update dependency isolation
+
+- Prevented ordinary Hermes upgrades from disabling Nerve when optional ML
+  dependencies cannot resolve for the host's complete uv target matrix
+  (observed: Python 3.14 / Android, Laya 0.3.29 → Torch).
+- Removed both Laya and development extras from the Nerve plugin's packaging
+  metadata. Nerve now has no runtime dependencies, optional dependencies,
+  dependency groups, or build-system declaration; Hermes's plugin admission
+  therefore has no Nerve-owned packages to add to its shared workspace.
+- Retained explicit Laya/D1 installers in isolated, user-authorized sidecar
+  virtual environments; contributor test tools are documented separately.
+- This fixes future installs/updates with corrected Nerve metadata. Hermes
+  profiles already disabled by an earlier update require a one-time Nerve
+  metadata refresh and re-enable after dependency admission succeeds.
+
+## Unreleased — Selective Context activation semantics
+
+- Enabling the parent Selective Context module now means enabled memory, tool
+  and skill surfaces default to **apply**. Explicit shadow/off settings remain.
+  Legacy and disabled modules preserve unmodified Hermes context.
+- The Nerve consumer now honors the resolved profile sidecar, Hermes settings,
+  advanced overrides and module dependency pruning instead of incorrectly
+  reading only raw plugin settings.
+- A new structured-memory hook offers evidence-backed verified/disproven
+  experience from the active Hermes profile, with user-scoped retrieval and
+  Hermes-side home/session/user validation. Existing unscoped experience
+  remains profile-scoped.
+- Compatible Hermes host adapters can now apply tool HOT hints and skill index
+  description demotion by default. Without those host adapters, Nerve does not
+  claim that it has changed model-visible tool or skill context.
+- Added focused regression tests for on/apply, explicit shadow, disabled modules,
+  tool/skill selection, and verified-memory scope isolation.
+- This is an unmerged candidate change, not a claim of native-install or
+  full-release qualification.
+
+## 0.4.14 — release sanitization
+
+- Internal planning material and the stale native-source snapshot excluded
+  from the public tree. The PR release scope excludes deferred experimental
+  dashboards and training tools; their original source is preserved separately.
+
+## 0.4.13 — sidecar authority, save-path, CLI/panel parity
+
+- The Nerve profile sidecar (`nerve/profile.json`) is authoritative when
+  present; a stale `nerve_profile` pin in Hermes `config.yaml` is surfaced as
+  an explicit conflict (panel + CLI) instead of silently overriding the saved
+  profile. Shared host-settings loader (`host_settings.py`) gives the CLI and
+  the control panel one identical view of Hermes `config.yaml`.
+- Control-panel saves no longer blocked by a conflicting config pin; module
+  cards show the saved choice plus the true runtime reason for the effective
+  state. 14 new regression tests (sidecar authority, conflict surfacing,
+  panel save/preview). Full suite at release: 1,351 passed, 0 failed,
+  6 skipped.
+
+## 0.4.12 — unified profile/config repair
+
+- Single resolver (`config_resolver.py`) for sidecar + Hermes config.yaml used
+  by CLI, panel, and runtime; server-driven control panel with cache-busted
+  web assets. Maintainer-side work; external contributions for the underlying
+  profile/UI surface remain credited in the section below.
+
+## Unreleased — 0.4.11 candidate: external contributions
+
+Native-admission repair (policy data as auditable plaintext tables): the protected system locations, disk-destroyer command names, and unbounded-executable command names moved from inline Python literals into `hermes_nerve/policy/*.txt` loaded once at import by `hermes_nerve/policy_tables.py` (missing/empty/duplicate tables fail the import loudly). Every protective entry is preserved exactly — pinned byte-set by `tests/test_policy_tables.py` against the frozen pre-refactor content — with decision equivalence proven over a 280-record probe. Completion-integrity hardening: a leading BLOCKED/PARTIAL/FAILED status label in a model-authored summary can never satisfy the legacy completion-summary gate (`tests/test_blocked_handoff_completion_gate.py`), keeping truthful blocked handoffs unverified-but-expressible.
+
+Eight external PRs have been integrated locally, with original authors and upstream provenance retained:
+
+- **Phuong Lambert (@phuongvm)** — [#63](https://github.com/keeltrace/hermes-nerve/pull/63): filter URLs and numeric metrics from requested paths; [#64](https://github.com/keeltrace/hermes-nerve/pull/64): bypass mutation gates for read-only introspection, not writes.
+- **@rharmanca** — [#67](https://github.com/keeltrace/hermes-nerve/pull/67): observe-only shadow completion; [#68](https://github.com/keeltrace/hermes-nerve/pull/68): prevent hook-local task IDs from polluting process environment; [#66](https://github.com/keeltrace/hermes-nerve/pull/66): structured terminal test results, empty-test rejection and V4A paths; [#72](https://github.com/keeltrace/hermes-nerve/pull/72): stacked launcher recognition, reconciled after #66 rather than double-applied; [#69](https://github.com/keeltrace/hermes-nerve/pull/69): TypeSafe-only provider selection and OpenRouter 402 guidance; [#71](https://github.com/keeltrace/hermes-nerve/pull/71): deterministic admission supervision floor, including provider-failure and obfuscation cases.
+
+**Configuration change (#69):** the `jev_provider` schema default is now empty/unset rather than `openrouter`. Explicit settings retain precedence; TypeSafe is auto-selected when it is the sole configured key. Both keys retain the OpenRouter default. Set the provider explicitly if routing must not depend on available keys. Current 1.14 model defaults are preserved.
+
+Integration also repairs launcher/quoted-code false positives and the HTTPError transport path while preserving existing sensitive-search, queue-bound, policy-memory and strict result-envelope protections. See [the integration ledger](docs/PR_INTEGRATION.md) and [contributor credits](CONTRIBUTORS.md).
+
+This is a **local candidate**, not a publication or live installation.
+
+### Community qualification update
+
+- Hardened risk-policy operands against custom string callbacks while preserving the original policy members. Hardened runtime identity observation against custom constant, descriptor, and metaclass callbacks; rejected values produce an unverifiable identity rather than a false match.
+- The complete current-code suite passed: **1,289 passed, 1 skipped**, on the tested Python 3.14 runtime. The skip is the removed Von backend. This is not certification of every supported Python version or optional model backend.
+- A real native installation from an immutable local Git source into a fresh credential-free Hermes home was **rejected before installation** by native security validation. No dependencies were installed, no plugin was enabled, and no serving profile was changed. The five critical policy-literal findings remain an installation compatibility blocker.
+- Clean installed-runtime configuration/decision/disable/uninstall acceptance is therefore **not passed**. Private scanner experiments are not included in the release or required by its installation instructions. The candidate is **not release-ready** while this supported-installation gate remains unresolved.
+
+## 0.4.2 — Selective HITL, effect-aware catalog, Git index repair
+
+### Phase 0 — Git worktree/index
+- Diagnosed the "dirty after release" report: the worktree index at
+  `.git/worktrees/nerve-v0.4.0/index` was owned by `mega-mcp` with no ACL entry
+  for the repository user, so reads failed and the staged state was a stale
+  index written by a concurrent service — not repository corruption. Commits
+  during 0.4.1 had gone through a temporary index, which left the real index
+  behind HEAD.
+- Repaired without `reset --hard`, `clean`, repository recreation, chmod 777 or
+  tag changes: snapshot (source tarball, HEAD, tags, ACLs, gitdir listing),
+  moved the unreadable index aside, rebuilt it with `git read-tree HEAD`, and
+  added narrow ACLs (`u:mega-mcp:rw` on the index, default `u:j:rwx` on the
+  worktree gitdir) so a service write cannot lock the owner out again.
+- `build/` and `*.egg-info/` removed from tracking and ignored.
+
+### Phase 1 — effect-aware classification
+- Unknown plugin/MCP tools are no longer classified by name alone. Every call is
+  screened across the tool name, argument keys, argument values and path-shaped
+  arguments for credential targets (`get_secret`, `read_private_key`,
+  `fetch_sensitive_config`, `*_access_key`, field names such as `password_hash`).
+  A signal escalates to CONSEQUENTIAL with the concrete reason; a clean read
+  shape is recorded as *inferred bounded* (`basis: mcp-verb-screened`), never as
+  verified-safe.
+- `operation_effect()` no longer treats an MCP verb as proof of read-only, so no
+  name-based bypass exists for unknown remote tools.
+- Deferred dispatch (`tool_call`) is classified by its inner tool and arguments.
+- Native reads screen nested/alternate argument shapes (`uri`, nested objects,
+  lists) for sensitive targets, and the read-only terminal bypass does the same.
+- `printenv`, `env`, `set`, `export`, `declare`, `typeset`, `compgen` are
+  classified as environment disclosure (CONSEQUENTIAL) and are no longer
+  read-only bypasses; `ps e`/`ps eww` and `/proc/*/environ` are excluded too.
+- Gate-failure approvals use a scoped, single-use rule key
+  (`nerve:hitl:gate-failure:<tool>:<args-fingerprint>:<nonce>`) instead of one
+  shared key, so a session/permanent grant cannot authorize an unrelated call.
+- Recursion protection is unchanged: only the model primitives
+  (decide/verify/assess/rank) keep the named internal allowance.
+
+### Phase 2 — selective HITL and autonomy
+- New bounded-uncertainty policy: an unrecognized but plainly local command is
+  auto-allowed with telemetry in ask-only/enforce instead of prompting. Every
+  pipeline segment is checked; shells/interpreters running inline code or script
+  paths, wrappers (`timeout`, `env`, `xargs`, ...), network egress
+  (`curl`, `wget`, `ssh`, `rsync`, ...), orchestration/publishing
+  (`docker`, `kubectl`, `gh`, `npm`, `terraform`, ...), host/service control,
+  privilege escalation, destructive recursive flags and force operations remain
+  unbounded and keep escalation.
+- Consequential approvals use a concise consequence message:
+  `Do this -> ...` / `Skip -> ...` (no percentages, no essays). The native
+  four-choice Hermes menu is unchanged.
+- `browser_console` is routine page inspection (no host access).
+- Live-registry audit: `scripts/audit_catalog.py --hermes` reads
+  `hermes tools list`, maps toolsets, reports unknown toolsets and unresolved MCP
+  servers, and separates verified-safe from inferred-bounded coverage.
+  Measured 54/54 registered tools classified (23 verified safe, 12 verified
+  bounded, 19 consequential, 0 unclassified, 0 unreviewed toolsets).
+- `scripts/benchmark_workflow.py`: 100 ordinary calls at 0 approval
+  interruptions, max hook latency 0.9 ms, with 14/14 adversarial calls still
+  protected (secrets, private keys, force-push, curl|bash, kubectl delete, ssh,
+  env dumps, protected writes, unknown MCP verbs, nested dispatch).
+
+### Verification
+- Full suite: 978 passed, 1 skipped.
+- Real Hermes canary on the candidate build: 5 consecutive tools, 0 approval
+  prompts, max hook chain 2.0 ms.
+
+## 0.4.1 — P0 Hook Timeout Fix + Operation-Aware Safe Catalog
+
+### P0 — pre-tool hook reliability (root cause: synchronous advisory inference)
+- Advisory model evaluation moved OFF the synchronous `pre_tool_call` path onto a
+  supervised daemon worker with a bounded queue (`hermes_nerve/advisory.py`).
+  Verdicts are telemetry-only and can never retroactively authorize or block.
+- Real per-evaluation deadline: each evaluation runs on a tracked daemon thread
+  and the worker joins it for `NERVE_ADVISORY_CALL_TIMEOUT` (default 8s). A hung
+  provider can no longer occupy the worker; abandoned evaluations are capped
+  (`NERVE_ADVISORY_MAX_ABANDONED`, default 2) and new work is refused instead of
+  spawning unbounded replacement threads.
+- `enforce`/`ask-only` keep a single bounded synchronous attempt (8s budget,
+  request-scoped timeout via `client.timeout_scope`) then fail to the native
+  human approval boundary — no double retry, no 30s hook overrun.
+- Circuit breaker only opens on genuine stalls/timeouts; instant failures
+  (missing credential, refused connection) never suppress later decisions.
+- Composite `pre_tool_call` chain is instrumented per callback with sanitized
+  timing records (`nerve/hook-trace.jsonl`); arguments are never recorded.
+- Explicit callback failure semantics: telemetry failures never block tools,
+  advisory supervisions (remote/work/nervous) continue on error, and a crashing
+  **action gate** fails to human approval instead of silently permitting.
+- Worker lifecycle: test reset and session-end teardown join the previous worker
+  before replacement; repeated initialization cannot accumulate threads.
+
+### P1 — operation-aware safe catalog (`hermes_nerve/catalog.py`)
+- Classifies tools by OPERATION (tool identity + effect-bearing arguments),
+  not by name: skills, Nerve tools, memory, Kanban, browser, cron and MCP.
+- Removed the blanket `nerve_`/`jev_` namespace bypass. Only the model
+  primitives that would recurse (decide/verify/assess/rank) retain a narrow,
+  named anti-recursion allowance.
+- `skill_manage` is operation-aware (view/read = safe, create/update = project,
+  delete = consequential, unknown = uncertain).
+- `tool_call` (deferred dispatch) is never auto-allowed.
+- MCP/plugin tools are classified by operation verb; unknown verbs stay
+  UNCERTAIN.
+- Sensitive-path reads keep escalating even for cataloged read tools.
+- Added `scripts/audit_catalog.py` for ongoing coverage auditing (100% coverage
+  across the 44 known native/Nerve tools) and catalog telemetry in
+  `gate.report()` (`catalog_read_only_bypasses`, `interruption_ratio`).
+
+### Verification (this release)
+- Fix-before/after evidence: the advisory hook blocked 80.0s against a 30s
+  budget before; after, the same path schedules asynchronously in <2ms.
+- Real Hermes sessions with the candidate build: consecutive tool calls, max
+  hook chain 4.8ms, zero 30s timeouts, zero approvals for cataloged read-only
+  work, async provider failures recorded as telemetry only.
+- Full suite: 947 passed, 1 skipped.
+
+## 0.4.0 — Internal Release
+
+- Implemented HermesContextBus acceptance demo (N-33) as `hermes_nerve.integrations.contextbus_demo`, proving two-profile publishing/receiving, unauthorized profile rejection, and adapter fallback when bus is unavailable.
+- Added regression tests for the five HITL v2.2 security defects:
+  * Path-qualified executable guard
+  * Credential directory nesting detection (including ~/.docker/, .env/, nested ~/.config/gh)
+  * Git push effect identity (fixed --all/--tags/--mirror binding)
+  * Unresolved consequential effect re-approval prevention
+  * Multi-file authorization for reads over eight sensitive paths
+- Verified all existing test suites (chunked runs due to host memory pressure) and closed the remaining unit test blockers (127 + 103 + 53 + 98 + 45 tests).
+- Created formal packaging artifacts:
+  * Updated plugin.yaml to version 0.4.0
+  * Added CHANGELOG.md entry for this release
+  * Generated RELEASE_MANIFEST (SHA‑256 checksums of plugin.yaml, hermes_nerve/ and docs/ artifacts)
+  * Produced a local ZIP distribution `nerve‑v0.4.0.zip` with hermes_nerve/, docs/ and plugin.yaml
+- Produced release verification evidence:
+  * `docs/evidence/...` collection (historical HITL v2.4 snapshot)
+  * Final completion‑integrity verifier `scripts/verify_completion.sh` (historical completion checks)
+  * Real‑Hermes‑session plugin override test (`HERMES_ENABLE_PROJECT_PLUGINS=1`) to confirm v0.4.0 loads and preserves the live installation
+- Documented activation and rollback procedure (docs/ACTIVATION.md) for a single‑session, controlled Nerve v0.4.0 rollout.
+
+## Unreleased — Operator-first Control Panel
+
+- Add a local-only, browser-based setup wizard and staged Hermes plugin installer, accessible via `nerve ui` and `nerve setup --web`.
+- Preselect Operator on fresh setup; first-time GUI installs initialize Operator, while existing Legacy installations remain untouched until explicitly changed.
+- Make Verified Experience and selective memory/tool/skill admission independently selectable with runtime dependency pruning and existing tool-schema compatibility.
+- Add exact profile backup/restore, preview integrity checking, manifest-typed advanced settings, provider-free local connection tests, and source/wheel installation paths.
+- Protect the browser API with ephemeral tokens, origin and host checks, strict CSP and nested credential redaction. Bundled HTML/CSS/JS requires no frontend build step.
+- Add UI, rollback, installation-failure and compatibility regression tests. Source and wheel installations require a Hermes restart to activate changes.
+
+
+## 0.3.2.1 — Selective Context
+
+- Add a dependency-free, provider-neutral selective-context admission controller for memory, tools, and skills.
+- Add task fingerprints and stable admission leases to reduce per-turn churn and preserve prompt-cache-friendly working sets.
+- Add PIN / ADMIT / DEFER / SUPPRESS actions with mandatory-item protection and fail-open behavior.
+- Add adapters for v0.3.2 Verified Experience, Hermes tool schemas, and skill metadata.
+- Keep unselected tools and skills discoverable via DEFER; memory suppression is turn-local and never deletes provider state.
+- Add bounded local token accounting and selective-context telemetry through nerve_stats.
+- Default all surfaces to shadow mode and keep semantic reranking disabled by default.
+
+See docs/RELEASE_0.3.2.1.md.
+
+## 0.3.2 — Verified Experience
+
+- Add a dependency-free local Verified Experience store for typed `observed`, `inferred`, `verified`, and `disproven` claims with evidence IDs, confidence, scope, temporal validity, supersession, conflict state, provenance, and outcome counters.
+- Persist first-class negative knowledge from existing repeated/deterministic failure fingerprints so unchanged failed paths are not rediscovered as ordinary prose memory.
+- Promote existing work checkpoints into successor-run capsules carrying verified DoD criteria, failed paths, discoveries, artifacts, evidence references, unresolved frontier, and the next move.
+- Link controller-verified DoD facts to reusable experience while keeping the canonical work/Kanban store authoritative.
+- Add deterministic scope/recency/confidence/usefulness/token-cost retrieval, token-aware memory admission, and explicit `why_retrieved` score metadata.
+- Aggregate successful failure-fingerprint recoveries into bounded local recovery playbooks.
+- Link claim/recovery outcomes back to decision/receipt provenance and expose bounded evidence graphs plus run/task/project/global summaries.
+- Add provider-free `nerve_context_explain` for named context-governor profiles and `nerve experience status|search|explain|summary|graph|reconcile` CLI inspection.
+- Add advisory-only offline reconciliation across verified experience and the existing receipt/outcome ledgers. Recommendations are review-required and can never self-mutate profile/configuration or canonical task state.
+- Preserve the Legacy 16-tool contract, zero Nerve schemas in headless workers, dependency-free core, Python 3.10+, and hard-OFF schema behavior for Lean/Marie Kondo defaults while allowing their existing work-supervision path to preserve bounded local experience.
+
+See `docs/RELEASE_0.3.2.md`.
+
+## 0.3.1 — stable maintenance, hardening, and QOL
+
+Stable promotion of the qualified `v0.3.1rc2` tree.
+
+- Fix Nerve settings namespace handling so configuration is read from `plugins.entries.nerve.settings`; warn on the legacy ignored `hermes-nerve` block and preserve omitted profile-script settings instead of overwriting effective values.
+- Harden context-engine registration/loading, unknown-mode fallback, stats truthfulness, ledger session attribution, and worker profile secret-scope propagation.
+- Re-evaluate machine-checkable completion criteria against current repository state so stale PASS verdicts cannot survive deleted files, regressed tests, or newly dirty Git state.
+- Stop deterministic retry loops immediately on policy/permission/schema/path failures while preserving transient retry behavior.
+- Make implementation progress task-relative: scratch/repro edits do not count as completion progress, native mutation aliases such as `patch` are recognized consistently, and requested verification must actually pass before completion.
+- Detect repeated package/virtualenv/test-environment setup failures and force repository-native recovery instead of continuing environment thrash.
+- Make Shared Context opt-in for all named profiles while HermesContextBus lacks a public install source; explicit local-source installation and explicit module enablement remain supported, and `setup --explain` no longer emits a missing-dependency warning when the module is disabled.
+- Sanitize historical machine-specific filesystem paths from public planning/evidence material before the final source tag.
+- Include the explicitly approved opt-in ask-only Action Gate from #41, hardened by #44 so BLOCK verdicts escalate with action-specific approval keys and registration honors the gate-mode environment fallback. Deep Research Kit (#37), block-review judge (#38), HermesContextBus publication (#40), and other unrelated 0.3.2 feature work remain outside this release.
+
+### Attribution
+
+- **@jcrabapple** — authored #20 (Hermes profile-aware secret resolution), #21 (gate probability telemetry), #22 (dual-signal p(ALLOW) enforce hardening), and #41 (opt-in ask-only Action Gate). #41 ships with the maintainer safety hardening from #44.
+- **@colibrishin** — reported #29 and authored the settings/context-engine/stats/ledger hardening series in #30, #31, #32, and #33.
+- **@omarabdo516** — reported #35, the multiplexed-gateway ContextVar/secret-scope failure that led to the worker/shadow context propagation fix.
+- **@HiroKws** — reported #39 and supplied the follow-up investigation that identified the unpublished HermesContextBus dependency and the correct public-facing setup failure mode.
+- **@keeltrace** — maintainer integration, regression campaign reconciliation, completion/retry/progress hardening, release engineering, and final maintenance assembly.
+
+AI-assisted implementation/review was used on parts of the maintenance work and is disclosed in the relevant PRs. Human-facing attribution above follows the public issue/PR authorship record.
+
+Verification gate for the final release: Python 3.10–3.14 CI, release structural verification, Plugin Validate/Doctor, focused completion/retry/progress/profile regressions, package integrity, and exact release-branch review.
 
 ## 0.3.0 — profiles, modular runtime, and release hardening
 
@@ -155,56 +444,3 @@ Verification for the release candidate includes Python 3.10–3.14 CI, Hermes pl
 - Fix the production decision-router bug proven by the Solar Pro 4 dev7 run: `SupervisionStore.events()` returns parsed event payloads under `row["payload"]`, while dev7's router looked for the removed `payload_json` field, so every failure fingerprint list was empty and repeated failures could never trigger Jev.
 - Preserve failure memory across normal work: select the last N `TEST_FAILED` events rather than the last N general work events.
 - Record per-test failure fingerprints for the complete failing-test set, so a persistent test can be recognized even as pytest failure order/cardinality changes.
-- Mark an exact locked deterministic test criterion `FAIL` when its command fails, allowing the 40% checkpoint to see real negative progress instead of a falsely healthy UNKNOWN state.
-- Wire Hermes' native `pre_verify` hook to the deterministic-first completion verifier and batched Jev semantic completion decision.
-- Add `on_session_end` as a last-resort completion audit for lifecycle paths that bypass `pre_verify`.
-- Enforce a cooldown after a trajectory call so repeated pytest failures do not cause one Jev spend per test run. Blocker/plan-change triggers remain urgent.
-- Retain dev7's deterministic startup binding, exact run/claim fencing, package-relative imports, and zero model-visible Jev tools for headless workers.
-- Add regression coverage reproducing the exact dev7 failure mode: interleaved events, changing pytest failure sets, checkpoint FAIL state, real trajectory provider invocation, cooldown suppression, semantic pre-verify provider invocation, and session-end completion fallback.
-
-## 0.2.2.dev7 — deterministic headless Kanban binding
-
-- Fix the production bootstrap failure discovered by the Solar Pro 4 A/B run: Hermes v0.21.3 moved DB connection helpers to `hermes_cli.kanban_db_connect`, while dev6 called the removed `kanban_db.connect()` symbol.
-- Prefer the dispatcher-pinned `HERMES_KANBAN_DB` / `HERMES_KANBAN_BOARD` when reading the canonical task so another controller's selected board cannot redirect supervision.
-- Bind the locked DoD and exact run locally during plugin startup, before the worker's first provider call; later hooks only refresh run/session context.
-- Validate canonical `current_run_id` and `claim_lock` against dispatcher env before accepting a binding.
-- Keep headless workers at zero model-visible `jev_*` schemas.
-- Include the dev6 runtime relative-import hotfix in the packaged source.
-- Add a split-Kanban compatibility regression test and startup-binding integration test.
-
-## 0.2.2.dev6 — headless token-saving Kanban supervision
-
-Dev6 is the A/B-tuned follow-up to dev5. It changes supervised Kanban from a worker-visible Jev toolkit into a headless decision coprocessor.
-
-- Ordinary Kanban workers register **zero Jev tools**; controller/admin sessions retain all 16 public Jev tools.
-- Work supervision is enabled by default for Jev-enabled profiles and defaults to advisory mode.
-- A structured `## Definition of Done` is automatically compiled, locked, budgeted, and bound to the exact Kanban run before useful work begins.
-- Budget accounting now runs per provider API request (`post_api_request`) and records input/output/reasoning/cache tokens idempotently by request ID.
-- Default budget checkpoints are sparse: 40% and 70%.
-- Deterministic evidence gets first refusal; safe tests/files/git invariants can reach VERIFIED_PASS without a Jev provider call.
-- Completion batches any remaining semantic criteria into one Jev verification instead of one call per criterion plus another terminal call.
-- A local ROI router suppresses Jev calls on healthy/low-signal work and enforces a supervisor token allowance.
-- Repeated equivalent pytest failures use stable test-identity fingerprints and can trigger one hidden trajectory assessment.
-- A live trajectory assessment asks Jev for both trajectory (`CONTINUE/WATCH/REPLAN/BLOCK`) and bounded next action in one System One call.
-- High-confidence guidance is injected once, compactly, into the next tool result; the worker does not spend a separate turn deciding whether to ask Jev.
-- Jev provider tokens are recorded separately from worker tokens, and status includes combined/economic telemetry.
-- Exact-run fencing, canonical Kanban review/replan, remote execution, Git result refs, and the single-authority invariant are preserved.
-
-## 0.2.2.dev5 — evidence-backed distributed work supervision
-
-- Add immutable/versioned Definition of Done contracts with Jev preflight review.
-- Add run-scoped work events, controller-observed evidence, independent criterion verification, deterministic progress/frontier projection, and terminal completion verification.
-- Carry verified facts across successor runs while the locked DoD hash is unchanged.
-- Add token allocations, explicit usage provenance, one-shot budget checkpoints, trajectory predictions, calibration telemetry, and shadow/advisory/enforce control modes.
-- Add safe checkpoint packets and canonical Kanban review handoff for WATCH/REPLAN/BLOCK controls.
-- Add durable admin-aliased SSH Hermes execution based on the Outpost security model.
-- Preserve canonical run/claim identity end to end and fence stale remote workers/results.
-- Preserve exit code 75 rate-limit semantics so canonical Kanban can requeue without charging a failure.
-- Add remote run-control files over a second ordinary SSH invocation; no daemon or reverse tunnel.
-- Add Git-native exact-HEAD + dirty/untracked workspace transport and result refs without modifying the controller checkout.
-- Preserve the existing Jev typed decision, context, provenance, nervous-system, and gate surfaces in the unified plugin.
-- Add North-Star recovery, Git isolation, remote execution, registration, trajectory, and supervision regression suites.
-
-## 0.2.2.dev4
-
-Upstream fixed point: paid OpenCode Zen provider plus runtime/repository hardening. See source provenance for the exact commit used as the dev5 baseline.

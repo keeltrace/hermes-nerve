@@ -1,0 +1,122 @@
+Nerve v0.3.2 Build Verification
+================================
+
+Base
+----
+Repository: keeltrace/hermes-nerve
+Stable source tag: v0.3.1
+Stable source commit: 3de7d94982b7a2cb87c829e4b2366ced927d8fed
+Implementation branch: feature/v0.3.2-verified-experience
+Build date: 2026-10-04
+Python available in verification sandbox: 3.12.3
+
+Implemented release scope
+-------------------------
+PASS Typed evidence-backed claims: observed / inferred / verified / disproven
+PASS First-class negative knowledge from existing failure fingerprints
+PASS Claim supersession, deterministic conflict detection, temporal validity
+PASS Scoped experience with privacy redaction
+PASS Deterministic utility-ranked retrieval with why_retrieved metadata
+PASS Token-aware deterministic admission
+PASS Semantic duplicate suppression
+PASS Bounded evidence graph
+PASS Existing-checkpoint -> successor-run capsule promotion
+PASS Automatic work-supervision verified-fact capture
+PASS Failure-fingerprint recovery observation and playbook promotion
+PASS Outcome attribution to claims, decisions, receipts, and recoveries
+PASS Hierarchical run/task/project/global summaries
+PASS Provider-free nerve_context_explain
+PASS CLI: nerve experience status/search/explain/summary/graph/reconcile
+PASS Offline reconciliation is advisory-only and never mutates policy/config
+PASS Legacy tool contract preserved at 16 tools
+PASS Headless Kanban worker tool surface remains zero
+PASS Core package dependencies remain []
+PASS Version surfaces moved to 0.3.2
+
+Final focused verification
+--------------------------
+Command: python3 -m compileall -q .
+Result: PASS
+
+Command: python3 -m unittest discover -s tests -p 'test_experience_v032.py' -v
+Result: PASS - 17 tests
+
+Command: python3 -m unittest discover -s tests -p 'test_module_absence.py' -v
+Result: PASS - 15 tests
+
+Command: python3 -m unittest discover -s tests -p 'test_profile_capability_matrix.py' -v
+Result: PASS - 14 tests
+
+Command: python3 -m unittest discover -s tests -p 'test_plugin_registration.py' -v
+Result: PASS - 3 tests
+
+Command: python3 -m unittest discover -s tests -p 'test_nervous.py' -v
+Result: PASS - 26 tests
+
+Command: python3 -m unittest discover -s tests -p 'test_work_supervision.py' -v
+Result: PASS - 8 tests
+
+Command: python3 -m unittest discover -s tests -p 'test_terminal_handoff_dev9.py' -v
+Result: PASS - 14 tests
+
+Command: python3 scripts/verify_release.py
+Result:
+PASS version=0.3.2 legacy_tools=16 fat_cat_tools=12 operator_tools=9 lean_tools=6 marie_kondo_tools=8 hook_names=9 catalog_version=0.3.2 profiles=REGISTERED_AND_ASSERTED single_authority=PASS controller_completion=PASS reflex_laya=PASS reflex_openjev=PASS
+
+CLI smoke
+---------
+Command: python3 -m hermes_nerve experience status
+Result: PASS
+
+Command: python3 -m hermes_nerve experience reconcile
+Result: PASS
+Observed authority=advisory-only, mutated_policy=false, review_required=true.
+
+Broad dependency-free unittest campaign
+---------------------------------------
+Command: python3 -m unittest discover -s tests -v
+Observed: 340 tests discovered/run; 339 passed.
+One import error occurred before that module's tests could execute:
+  tests/test_settings_namespace.py -> ModuleNotFoundError: No module named 'yaml'
+
+This is an environment dependency gap, not a test assertion failure. PyYAML is
+already an existing dev dependency in pyproject.toml.
+
+Unavailable verification in this sandbox
+----------------------------------------
+- pytest is not installed.
+- PyYAML is not installed.
+- System pip install is blocked by PEP 668.
+- A temporary venv was attempted, but package installation could not reach the
+  package index because sandbox DNS/network access is blocked.
+- Therefore the canonical full pytest command could not be executed here.
+- Live provider checks requiring external credentials/network were not claimed.
+
+The temporary verification venv was removed before packaging.
+
+Release authority / safety invariants
+-------------------------------------
+Verified Experience is advisory. It does not own canonical Kanban/task state.
+Reconciliation only emits review-required recommendations and does not edit
+profiles/configuration. Automatic experience persistence failures are fail-open
+with respect to canonical work supervision. Normal experience retrieval and
+admission make no provider calls.
+
+Profile behavior
+----------------
+Legacy:
+  Existing 16-tool runtime contract retained; automatic Verified Experience off.
+
+Fat Cat / Operator:
+  Verified Experience active through context/local-learning ownership.
+  nerve_context_explain is available because Context Governor is enabled.
+
+Lean / Marie Kondo:
+  No new tool-schema surface.
+  Their existing work-supervision path may persist bounded verified facts and
+  successor capsules locally.
+
+Headless Kanban workers:
+  Zero Nerve tool schemas retained.
+
+See docs/RELEASE_0.3.2.md for the complete release design and limitations.

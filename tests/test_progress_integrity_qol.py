@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -30,6 +31,66 @@ class ProgressIntegrityQolTests(unittest.TestCase):
                 targets,
             )
         )
+
+    def test_urls_and_metrics_not_treated_as_requested_paths(self):
+        msg = "Update monitor: buzz_platform 378.5 ms https://buzz.ptdev.vip/ and @url:https://honcho-api.ptdev.vip/health"
+        targets = requested_paths(msg)
+        self.assertEqual(targets, ())
+        self.assertTrue(mutation_is_relevant("patch", {"path": "scripts/watchdog_htop.py"}, targets))
+
+    def test_case_insensitive_url_and_marker_stripping(self):
+        cases = [
+            ("HTTPS://EXAMPLE.COM/foo.py", ()),
+            ("Https://example.com/sub/bar.py", ()),
+            ("@URL:https://example.com/api/test.py", ()),
+            ("@url:HTTPS://EXAMPLE.COM/spec.py", ()),
+            ("URL:HTTP://SERVER/index.html", ()),
+            ("HTTPS://EXAMPLE.COM/foo.py then fix src/parser.py", ("src/parser.py",)),
+            ("Check @URL:https://host/doc.md and update lib/utils.py and tests/test_run.py", ("lib/utils.py", "tests/test_run.py")),
+            ("Mixed HttP://ExAmPlE.CoM/bar.py followed by a/b/c.py", ("a/b/c.py",)),
+        ]
+        for msg, expected in cases:
+            with self.subTest(msg=msg):
+                self.assertEqual(requested_paths(msg), expected)
+
+    def test_bare_python_version_ranges_are_not_file_targets(self):
+        targets = requested_paths(
+            "Support Python 3.10-3.14 and 3.11-3.13; fix src/parser.py"
+        )
+        self.assertEqual(targets, ("src/parser.py",))
+        # Explicitly named files are still protected even if their names
+        # happen to resemble version ranges.
+        explicit = requested_paths(
+            "Edit file 3.10-3.14 and fix src/3.10-3.14.py and ./3.11-3.13"
+        )
+        self.assertEqual(
+            explicit,
+            ("3.10-3.14", "src/3.10-3.14.py", "3.11-3.13"),
+        )
+
+    def test_masked_test_result_cannot_satisfy_completion_verification(self):
+        with tempfile.TemporaryDirectory() as td:
+            system = self._system(td)
+            system.start_turn(
+                user_message="Fix src/parser.py and run regression tests",
+                session_id="masked-s", turn_id="masked-t",
+            )
+            system.observe_tool_call(
+                tool_name="terminal", args={"command": "pytest -q || true"},
+                status="ok",
+                result='{"output":"3 passed in 0.01s","exit_code":0,"error":null}',
+                error_message="", tool_call_id="masked",
+                session_id="masked-s", turn_id="masked-t",
+            )
+            self.assertEqual(system.status(turn_id="masked-t")["verified_test_passes"], 0)
+            system.observe_tool_call(
+                tool_name="terminal", args={"command": "pytest -q"},
+                status="ok",
+                result='{"output":"3 passed in 0.01s","exit_code":0,"error":null}',
+                error_message="", tool_call_id="real",
+                session_id="masked-s", turn_id="masked-t",
+            )
+            self.assertEqual(system.status(turn_id="masked-t")["verified_test_passes"], 1)
 
     def test_scratch_mutation_does_not_clear_progress_stall(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
@@ -143,6 +204,42 @@ class ProgressIntegrityQolTests(unittest.TestCase):
                 coding=True, changed_paths=["src/parser.py"],
             ))
 
+
+    def test_wrapped_verification_needs_successful_nonempty_test_execution(self):
+        command = 'taskset -c 0 nice -n 15 python -B -m unittest tests.test_parser -v'
+        cases = ((0, 'Ran 1 test in 0.01s\nOK', True),
+                 (1, '1 passed in 0.01s', False),
+                 (0, 'Ran 0 tests\nOK', False),
+                 (0, '1 failed in 0.01s', False))
+        for exit_code, output, verified in cases:
+            with self.subTest(exit_code=exit_code, output=output), tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+                # events live outside the workspace td: a late async flush must never
+                # race the workspace TemporaryDirectory cleanup (CI 3.12 Errno 39)
+                with tempfile.TemporaryDirectory() as events_td, patch.dict(os.environ, {
+                    'HERMES_NERVE_NERVOUS_EVENTS': str(Path(events_td) / 'nervous.jsonl'),
+                    'HERMES_NERVE_OUTCOMES': str(Path(events_td) / 'outcomes.jsonl'),
+                }):
+                    system = self._system(td)
+                    system.start_turn(user_message='Fix src/parser.py and run regression tests',
+                                      session_id='wrapped', turn_id='wrapped')
+                    system.observe_tool_call(
+                        tool_name='write_file', args={'path': 'src/parser.py', 'content': 'x=2'},
+                        status='ok', result='written', error_message='', tool_call_id='fix',
+                        session_id='wrapped', turn_id='wrapped')
+                    system.observe_tool_call(
+                        tool_name='terminal', args={'command': command}, status='ok',
+                        result=json.dumps({'output': output, 'exit_code': exit_code, 'error': None}),
+                        error_message='', tool_call_id='test', session_id='wrapped', turn_id='wrapped')
+                    self.assertEqual(system.status(turn_id='wrapped')['verified_test_passes'], int(verified))
+                    decision = system.completion_gate(
+                        turn_id='wrapped', session_id='wrapped', coding=True,
+                        changed_paths=['src/parser.py'], final_response='Done')
+                    if verified:
+                        self.assertIsNone(decision)
+                    else:
+                        assert decision is not None
+                        self.assertEqual(decision['action'], 'continue')
+                        self.assertIn('verification', decision['message'])
 
     def test_environment_classifier_and_thrash_recovery(self):
         from hermes_nerve.progress_integrity import environment_action, environment_failure

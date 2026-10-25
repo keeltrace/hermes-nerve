@@ -51,12 +51,12 @@ def load_plugin(tag: str):
 EXPECTED_ON = {
     "fat_cat": {
         "reflex", "nervous", "work_supervision", "token_trajectory",
-        "action_gate", "context_governor", "remote_workers", "shared_context",
+        "action_gate", "context_governor", "remote_workers",
         "assistant_loops", "assistant_audit", "receipts", "local_learning",
     },
     "operator": {
         "reflex", "nervous", "action_gate", "context_governor",
-        "shared_context", "receipts", "local_learning",
+        "receipts", "local_learning",
     },
     "lean": {"reflex", "nervous", "work_supervision", "token_trajectory", "receipts"},
     "marie_kondo": {"reflex", "work_supervision", "token_trajectory", "receipts"},
@@ -65,13 +65,13 @@ EXPECTED_ON = {
 EXPECTED_TOOLS_NO_REMOTE = {
     "fat_cat": {
         "nerve_decide", "nerve_rank", "nerve_verify", "nerve_assess",
-        "nerve_context_curate", "nerve_context_rehydrate", "nerve_stats",
+        "nerve_context_curate", "nerve_context_rehydrate", "nerve_context_explain", "nerve_stats",
         "nerve_nervous_event", "nerve_supervise_card", "nerve_work_event",
         "nerve_work_status",
     },
     "operator": {
         "nerve_decide", "nerve_rank", "nerve_verify", "nerve_assess",
-        "nerve_context_curate", "nerve_context_rehydrate", "nerve_stats",
+        "nerve_context_curate", "nerve_context_rehydrate", "nerve_context_explain", "nerve_stats",
         "nerve_nervous_event",
     },
     "lean": {
@@ -124,7 +124,7 @@ class ProfileCapabilityMatrixTests(unittest.TestCase):
                 # Fat Cat remote workers are intentionally conditional on hosts.
                 if profile == "fat_cat":
                     expected = expected - {"remote_workers"}
-                self.assertEqual(actual, expected)
+                self.assertEqual(actual, expected | {"verified_experience", "selective_context", "selective_context_memory", "selective_context_tools", "selective_context_skills"})
 
     def test_exact_tool_surface_without_remote_hosts(self):
         for profile, expected in EXPECTED_TOOLS_NO_REMOTE.items():
@@ -145,6 +145,10 @@ class ProfileCapabilityMatrixTests(unittest.TestCase):
                 self.assertEqual(mod.assistant.audit_enabled(), profile == "fat_cat")
                 self.assertTrue(mod.receipts.enabled())
                 self.assertEqual(mod.ledger.enabled(), profile in {"fat_cat", "operator"})
+                self.assertEqual(
+                    mod.experience.enabled(),
+                    profile in {"fat_cat", "operator", "lean", "marie_kondo"},
+                )
                 self.assertEqual(mod.nervous._default._config.local_learning, profile in {"fat_cat", "operator"})
                 self.assertEqual(
                     mod.work_runtime.settings()["nerve_observer_enabled"],

@@ -51,6 +51,10 @@ jobs:
 
       - name: Verify self-contained release package
         if: matrix.python-version == '3.14'
+        env:
+          # Runtime-identity hashing tests are CPU-bound. Avoid oversubscribing
+          # hosted runners; retain every test and the existing per-file deadline.
+          JEV_TEST_JOBS: "2"
         run: bash scripts/verify_dev17.sh
 
   required-matrix-compat:
@@ -72,18 +76,30 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          # Upstream permits older Python for updater bootstrapping only;
+          # runtime dependencies are declared for supported Python >=3.14.
+          python-version: "3.14"
 
       - name: Install pinned Hermes development checkout
         shell: bash
         run: |
           set -euo pipefail
           git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent
-          git -C /tmp/hermes-agent checkout ee8a919fd2769166d45ebf67f45ff5b1acec69fe
-          python -m pip install -e /tmp/hermes-agent
+          git -C /tmp/hermes-agent checkout 1c0cd667746d3395fe9e1b6c74f8f85952486f18
+          # Use upstream PM, not raw pip: uv.lock records intentional security
+          # overrides (e.g. Pillow 13 vs browser-harness's older exact pin).
+          HERMES_HOME="$RUNNER_TEMP/hermes-validation-home" \
+          PYTHONPATH=/tmp/hermes-agent python -m pm.build_env \
+            --source /tmp/hermes-agent \
+            --out "$RUNNER_TEMP/hermes-validation-venv" \
+            --python "$(command -v python)"
+          printf '%s\n' "$RUNNER_TEMP/hermes-validation-venv/bin" >> "$GITHUB_PATH"
 
       - name: Validate with plugin dependencies
         run: hermes plugins validate --install-deps .
+
+      - name: Native Selective Context request integration
+        run: PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" python tests/test_selective_context_request.py -v
 
       - name: Runtime plugin doctor
         run: hermes plugins doctor . --ci

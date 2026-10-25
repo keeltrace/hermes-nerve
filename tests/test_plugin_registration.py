@@ -15,8 +15,7 @@ ROOT=Path(__file__).resolve().parents[1]
 EXPECTED_TOOLS={
     "nerve_decide","nerve_rank","nerve_verify","nerve_assess","nerve_context_curate","nerve_context_rehydrate",
     "nerve_stats","nerve_nervous_event","nerve_supervise_card","nerve_work_event","nerve_work_status",
-    "nerve_remote_delegate_task","nerve_remote_worker_status","nerve_remote_worker_result","nerve_remote_worker_cancel","nerve_remote_worker_control",
-}
+    "nerve_remote_delegate_task","nerve_remote_worker_status","nerve_remote_worker_result","nerve_remote_worker_cancel","nerve_remote_worker_control", "nerve_context_explain",}
 EXPECTED_HOOKS={"pre_tool_call","post_tool_call","pre_llm_call","transform_tool_result","pre_verify","post_api_request","api_request_error","post_llm_call","on_session_end"}
 
 class FakeCtx:
@@ -40,7 +39,7 @@ class RegistrationTests(unittest.TestCase):
             mod=self.load_plugin();ctx=FakeCtx(Path(td))
             with patch.object(mod.work_runtime,"configure",wraps=mod.work_runtime.configure) as work_config:
                 mod.register(ctx)
-            self.assertEqual(VERSION,"0.3.2.dev0")
+            self.assertEqual(VERSION,"0.4.15")
             self.assertEqual(set(ctx.tools),EXPECTED_TOOLS)
             self.assertNotIn("nerve_assistant",ctx.tools)
             self.assertEqual({n for n,_ in ctx.hooks},EXPECTED_HOOKS)

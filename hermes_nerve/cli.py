@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import re
 import sys
 from pathlib import Path
 
-from . import assistant
+from . import assistant, experience
 from .config_resolver import resolve_config
+from .runtime_manifest import find_manifest
+from .host_settings import load_host_settings
 from .integrations import shared_context
 from .modules import MODULES
 from .profiles import clear_profile, load_profile, restore_profile_state, save_profile, snapshot_profile_state
+
+
+def _host_getter():
+    """Effective-state parity with the gateway and Control Panel: resolve
+    against Hermes config.yaml plugin settings, not just the Nerve sidecar."""
+    settings, _warnings = load_host_settings()
+    return lambda key, default=None: settings.get(key, default)
 
 _ORDER = ("fat_cat", "operator", "lean", "marie_kondo")
 _CLI_PROFILES = _ORDER + ("legacy",)
@@ -34,7 +44,7 @@ def _doc(profile, overrides=None, advanced=None):
 
 def _advanced_catalog():
     """Return manifest-declared advanced keys/types; fail loudly on schema drift."""
-    manifest = Path(__file__).resolve().parents[1] / "plugin.yaml"
+    manifest = find_manifest()
     pattern = re.compile(r"^  ([a-zA-Z0-9_]+): \{type: ([a-z]+), default: (.+?)(?:, description: .*)?\}$")
     try:
         lines = manifest.read_text(encoding="utf-8").splitlines()
@@ -109,13 +119,46 @@ def _edit_advanced(existing=None):
 
 
 def _current():
-    return resolve_config()
+    return resolve_config(get_config=_host_getter())
 
 
 def _show(r):
     print(f"Profile: {_DISPLAY.get(r.profile, r.profile)}")
+    ignored = getattr(r, "ignored_settings_profile", "")
+    if ignored:
+        print(f"Note: Hermes config.yaml selects the '{ignored}' Nerve profile; the saved Nerve profile "
+              f"'{r.profile}' takes precedence. Clear plugins.entries.nerve.config.nerve_profile to remove this note.")
+    reasons = getattr(r, "reasons", None) or {}
     for mid, spec in MODULES.items():
-        print(f"[{'ON ' if r.enabled(mid) else 'OFF'}] {spec.name:<18} {spec.description}")
+        reason = reasons.get(mid, "")
+        specific = reason and not reason.endswith(("preset", "configuration"))
+        suffix = f"  [{reason}]" if specific else ""
+        print(f"[{'ON ' if r.enabled(mid) else 'OFF'}] {spec.name:<18} {spec.description}{suffix}")
+    _show_states(r)
+
+
+def _show_states(r):
+    """Configured / Effective / Running / Pending-restart (Phase 5 contract).
+    The CLI is a separate process from the running Hermes gateway, so running
+    state is never claimed from saved files: it reports unavailable unless this
+    process is itself the Hermes plugin host."""
+    doc = load_profile()
+    configured = doc.get("nerve_profile") if doc else None
+    overrides = len(doc.get("nerve_modules") or {}) if doc else 0
+    advanced = len(doc.get("advanced") or {}) if doc else 0
+    print()
+    print(f"Configured: {configured or 'none saved'} "
+          f"(overrides: {overrides}, advanced: {advanced})")
+    on = [mid for mid in MODULES if r.enabled(mid)]
+    print(f"Effective:  {r.profile} ({len(on)}/{len(MODULES)} modules on)")
+    in_host = any(name in sys.modules for name in ("hermes_cli", "hermes_agent"))
+    if in_host:
+        print("Running:    in-process host detected; verify via live module introspection")
+        print("Pending restart: query the Control Panel served inside Hermes")
+    else:
+        print("Running:    verification unavailable (this CLI is a separate process "
+              "from the running Hermes gateway)")
+        print("Pending restart: unknown (query the Control Panel served inside Hermes)")
 
 
 def _save(profile, overrides=None, *, reset=False, advanced=None):
@@ -128,7 +171,7 @@ def _save(profile, overrides=None, *, reset=False, advanced=None):
     doc = _doc(profile, overrides, advanced)
     try:
         path = save_profile(doc)
-        resolved = resolve_config(profile=doc)
+        resolved = resolve_config(get_config=_host_getter(), profile=doc)
         shared = shared_context.reconcile_enabled(resolved.enabled("shared_context"))
     except Exception:
         # Profile persistence and external reconciliation are one setup
@@ -150,7 +193,7 @@ def _interactive():
     for i, profile in enumerate(_ORDER, 2):
         print(f"{i}. {_DISPLAY[profile]:<18} - {_DESC[profile]}")
     try:
-        raw = input("\nSelect [1-5]: ").strip()
+        raw = input("\nSelect [1-5, Enter=Operator]: ").strip() or "3"
     except (EOFError, KeyboardInterrupt):
         return 1
     if raw == "1":
@@ -171,7 +214,7 @@ def _interactive():
         print("Invalid selection", file=sys.stderr)
         return 2
     profile = _ORDER[int(raw) - 2]
-    proposed = resolve_config(profile=_doc(profile))
+    proposed = resolve_config(get_config=_host_getter(), profile=_doc(profile))
     _show(proposed)
     if input("Apply? [y/N]: ").strip().lower() not in {"y", "yes"}:
         return 1
@@ -183,8 +226,12 @@ def _interactive():
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="nerve")
     sub = parser.add_subparsers(dest="command")
+    ui = sub.add_parser("ui", help="Launch the local Nerve browser setup and Control Panel.")
+    ui.add_argument("--no-browser", action="store_true", help="Print the local URL without opening a browser.")
+    ui.add_argument("--port", type=int, default=0, help="Local port (default: random available port).")
     setup = sub.add_parser("setup")
     setup.add_argument("--show", action="store_true")
+    setup.add_argument("--web", action="store_true", help="Open the local graphical setup wizard.")
     setup.add_argument("--profile", choices=_CLI_PROFILES)
     setup.add_argument("--reset", choices=_CLI_PROFILES)
     setup.add_argument("--explain", action="store_true")
@@ -192,7 +239,46 @@ def main(argv=None):
     setup.add_argument("--replace-shared-context", action="store_true")
     setup.add_argument("--assistant-install", action="store_true")
     setup.add_argument("--assistant-disable", action="store_true")
+    exp = sub.add_parser("experience", help="Inspect verified local Nerve experience.")
+    exp.add_argument("action", choices=("status", "search", "explain", "reconcile", "summary", "graph"))
+    exp.add_argument("--query", default="")
+    exp.add_argument("--claim-id", default="")
+    exp.add_argument("--scope", default="{}", help="JSON object, e.g. {\"repository\":\"owner/repo\"}")
+    exp.add_argument("--limit", type=int, default=8)
     args = parser.parse_args(argv)
+
+    if args.command == "ui" or (args.command == "setup" and args.web):
+        from .control_panel_server import serve
+        serve(port=args.port if args.command == "ui" else 0, open_browser=not (args.command == "ui" and args.no_browser))
+        return 0
+
+    if args.command == "experience":
+        try:
+            scope = json.loads(args.scope)
+        except json.JSONDecodeError as exc:
+            exp.error(f"--scope must be valid JSON: {exc}")
+        if not isinstance(scope, dict):
+            exp.error("--scope must decode to an object")
+        store = experience.default_store()
+        if args.action == "status":
+            payload = store.report()
+        elif args.action == "search":
+            if not args.query.strip():
+                exp.error("search requires --query")
+            payload = {"matches": store.retrieve(args.query, scope=scope, limit=args.limit)}
+        elif args.action == "explain":
+            if not args.claim_id.strip():
+                exp.error("explain requires --claim-id")
+            payload = store.explain(args.claim_id)
+        elif args.action == "reconcile":
+            payload = store.reconcile_runtime()
+        elif args.action == "summary":
+            payload = store.hierarchical_summary(scope=scope, limit=args.limit)
+        else:
+            payload = store.evidence_graph(args.claim_id)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
     if args.command != "setup":
         parser.print_help(); return 2
     if args.profile and args.reset:
@@ -214,12 +300,15 @@ def main(argv=None):
     if args.assistant_disable:
         print(assistant.disable()); return 0
     if args.show and args.profile:
-        _show(resolve_config(profile=_doc(args.profile)))
+        _show(resolve_config(get_config=_host_getter(), profile=_doc(args.profile)))
         return 0
     if args.show or args.explain:
         current = _current(); _show(current)
         if args.explain:
-            print("\nShared Context: " + shared_context.explain())
+            if current.enabled("shared_context"):
+                print("\nShared Context: " + shared_context.explain())
+            else:
+                print("\nShared Context: OFF (opt-in; install HermesContextBus from an explicit local source before enabling).")
         return 0
     target = args.profile or args.reset
     if target:
@@ -228,7 +317,7 @@ def main(argv=None):
         # profile intentionally preserves module/advanced overrides, so showing
         # a fresh canonical preset here would misreport the effective state.
         saved = load_profile()
-        _show(resolve_config(profile=saved or _doc(target)))
+        _show(resolve_config(get_config=_host_getter(), profile=saved or _doc(target)))
         print(f"Saved {path}")
         return 0
     if not sys.stdin.isatty():
