@@ -44,7 +44,7 @@ class ProfileViewTests(unittest.TestCase):
                 expected = sorted(k for k, on in PROFILES[name].items() if on)
                 self.assertEqual(status["views"][name]["primary_modules"], expected, name)
 
-    def test_custom_view_shows_effective_modules_when_current(self):
+    def test_custom_view_shows_all_registered_modules_when_current(self):
         with tempfile.TemporaryDirectory() as td:
             panel = _panel(td)
             from hermes_nerve.config_resolver import resolve_config
@@ -53,15 +53,19 @@ class ProfileViewTests(unittest.TestCase):
             views = panel.profile_views(doc, cfg)
             self.assertEqual(
                 views["custom"]["primary_modules"],
-                sorted(k for k, on in cfg.modules.items() if on),
+                sorted(MODULES),
+            )
+            self.assertGreater(
+                len(views["custom"]["primary_modules"]),
+                sum(bool(on) for on in cfg.modules.values()),
             )
             # Not current -> no claim about its primary set.
             self.assertEqual(views["legacy"]["primary_modules"], [])
 
-    def test_custom_view_shows_effective_modules_when_switching_from_other_profile(self):
+    def test_custom_view_shows_all_modules_when_switching_from_other_profile(self):
         """Regression (PR #75 review): browsing Full Configuration from a named
-        profile must expose the live module selection, not an empty primary
-        list that collapses the view to setup-only extras."""
+        profile must expose every module (ON and OFF) so the operator can
+        activate missing modules without Advanced."""
         with tempfile.TemporaryDirectory() as td:
             panel = _panel(td)
             from hermes_nerve.config_resolver import resolve_config
@@ -71,8 +75,8 @@ class ProfileViewTests(unittest.TestCase):
             views = panel.profile_views(doc, cfg)
             on_modules = sorted(k for k, on in cfg.modules.items() if on)
             self.assertTrue(on_modules)
-            self.assertEqual(views["custom"]["primary_modules"], on_modules)
-            self.assertTrue(views["custom"]["primary_modules"])
+            self.assertEqual(views["custom"]["primary_modules"], sorted(MODULES))
+            self.assertTrue(set(on_modules).issubset(set(views["custom"]["primary_modules"])))
             self.assertFalse(views["custom"]["is_current_profile"])
 
     def test_available_with_setup_excludes_primary_and_setup_dependent(self):

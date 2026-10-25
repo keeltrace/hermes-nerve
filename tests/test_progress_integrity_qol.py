@@ -55,13 +55,13 @@ class ProgressIntegrityQolTests(unittest.TestCase):
 
     def test_bare_python_version_ranges_are_not_file_targets(self):
         targets = requested_paths(
-            "Support Python 3.10-3.14 and 3.11-3.13; fix src/parser.py."
+            "Support Python 3.10-3.14 and 3.11-3.13; fix src/parser.py"
         )
         self.assertEqual(targets, ("src/parser.py",))
         # Explicitly named files are still protected even if their names
         # happen to resemble version ranges.
         explicit = requested_paths(
-            "Edit file 3.10-3.14 and fix src/3.10-3.14.py and ./3.11-3.13."
+            "Edit file 3.10-3.14 and fix src/3.10-3.14.py and ./3.11-3.13"
         )
         self.assertEqual(
             explicit,
