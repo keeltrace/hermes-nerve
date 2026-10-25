@@ -1,3 +1,32 @@
+# Nerve v0.4.15 — contributor integration addendum (October 25, 2026)
+
+The history below describes an earlier local v0.4.11 integration phase. The
+current remote PR #75 release candidate is **v0.4.15**, and its original eight
+external contributor integrations remain credited in CONTRIBUTORS.md.
+
+Additional v0.4.15 reconciliations:
+- **@rharmanca, PR #73** (head `a2a19de`): added runner recognition,
+  whole-word failure checks, masked-exit-status rejection and the original
+  adversarial fixture file. Integrated in `eb4c696`; newer host-side
+  integrity handling was preserved rather than replacing files wholesale.
+- **@keeltrace, PR #59** (head `b3ea410`): harness-aware guard behavior
+  already in the branch; the missing KEE-804 heartbeat replay regression was
+  reintroduced in `40b5faa` with a synthetic public fixture instead of private
+  machine paths.
+- **Nerve-only normal Hermes update compatibility** (commit `cacf338`):
+  removed all Nerve project extras and dependency groups from Hermes's shared
+  uv resolution scope. Laya/D1 model runtimes remain explicitly user-installed
+  isolated sidecars, with no upstream Hermes edits.
+- **v0.4.15 release/version/UI/parser work** (commit `5c79d89`):
+  all modules visible in Full Configuration, dotted version-range path guard,
+  matching package/manifest/catalog versions.
+
+These commit references document source integration, **not automatic proof of
+native install, CI success, GitHub release publication, or live gateway health**.
+Verify all of those at the final release SHA before marking rollout complete.
+
+---
+
 # External PR integration — Nerve 0.4.11 candidate
 
 All eight requested external PRs are incorporated into the **local** release branch `release/v0.4.11-internal`. No remote PR merge, push, release publication or installed-plugin cutover is implied. Original contributor author identities and upstream PR/commit provenance are retained in the local integration commits; see [CONTRIBUTORS.md](../CONTRIBUTORS.md).
