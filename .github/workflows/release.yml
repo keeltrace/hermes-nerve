@@ -77,6 +77,8 @@ jobs:
           PY
 
       - name: Verify candidate
+        env:
+          JEV_TEST_JOBS: "2"
         run: bash scripts/verify_dev17.sh
 
       - name: Check existing release

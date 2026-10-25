@@ -23,6 +23,8 @@ subsequent tools). This module owns all deferred advisory work:
 """
 from __future__ import annotations
 
+import contextvars
+from functools import partial
 import json
 import os
 import queue
@@ -86,10 +88,13 @@ def run_bounded(fn: Callable[[], Any], deadline: float) -> tuple[Any, BaseExcept
             _refused += 1
             return None, TimeoutError("advisory evaluation capacity exhausted"), True
         box: dict[str, Any] = {}
+        # Raw threads do not inherit profile credentials or request context.
+        # Copy, never reconstruct/fallback to process-wide secrets.
+        evaluation_context = contextvars.copy_context()
 
         def _target() -> None:
             try:
-                box["result"] = fn()
+                box["result"] = evaluation_context.run(fn)
             except BaseException as exc:  # noqa: BLE001 - reported to caller
                 box["error"] = exc
 
@@ -210,6 +215,11 @@ def submit(tool_name: str, redacted_state: dict[str, Any],
     if not provider_available():
         return False
     key = str(correlation.get("tool_call_id") or f"{tool_name}:{time.monotonic_ns()}")
+    # The long-lived queue worker belongs to no submitting profile. Bind each
+    # item explicitly. Distinct copies let timeout telemetry run while an
+    # abandoned evaluation still occupies its own Context.
+    evaluate = partial(contextvars.copy_context().run, evaluate)
+    record = partial(contextvars.copy_context().run, record)
     with _state_lock:
         if key in _dedup:
             return False

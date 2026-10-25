@@ -13,6 +13,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from ..client import scoped_timeout
+
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
 DEFAULT_PATH = "/v1/systemone"
 DEFAULT_TIMEOUT = 5.0
@@ -76,6 +78,9 @@ class SystemOneHTTPClient:
         except (TypeError, ValueError):
             parsed_timeout = DEFAULT_TIMEOUT
         self.timeout = min(120.0, max(0.25, parsed_timeout))
+        budget = scoped_timeout()
+        if budget is not None:
+            self.timeout = min(self.timeout, budget)
         self.token = str(
             token if token is not None else os.getenv("HERMES_REFLEX_SYSTEMONE_TOKEN") or ""
         ).strip()
@@ -129,9 +134,13 @@ class SystemOneHTTPClient:
 
     def _transport_with_retry(self, url: str, headers: dict[str, str], body: bytes) -> tuple:
         last_error: Exception | None = None
+        deadline = time.monotonic() + self.timeout
         for attempt in range(self._TRANSIENT_RETRY_ATTEMPTS):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
-                return self._transport(url, headers, body, self.timeout)
+                return self._transport(url, headers, body, remaining)
             except SystemOneHTTPError as exc:
                 message = str(exc)
                 # "connection failed" is the transport-level branch raised for
@@ -140,9 +149,13 @@ class SystemOneHTTPClient:
                 if "connection failed" not in message:
                     raise
                 last_error = exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
                 if attempt + 1 < self._TRANSIENT_RETRY_ATTEMPTS:
-                    time.sleep(0.25 * (attempt + 1))
-        assert last_error is not None
+                    time.sleep(min(0.25 * (attempt + 1), remaining))
+        if last_error is None:
+            raise SystemOneHTTPError("System One endpoint connection failed: request deadline exhausted")
         raise last_error
 
     def system_one(

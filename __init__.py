@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 try:
-    from .hermes_nerve import assistant, client, context, experience, gate, ledger, nervous, receipts, schemas, selective_context, tools
+    from .hermes_nerve import assistant, advisory, client, context, experience, gate, ledger, nervous, receipts, schemas, selective_context, tools
     from .hermes_nerve import reflex
     from .hermes_nerve.config_resolver import resolve_config
     # Import the module, not the class: Hermes' context-engine directory loader
@@ -21,7 +21,7 @@ try:
     from .hermes_nerve.work import runtime as work_runtime
     from .hermes_nerve.work import tools as work_tools
 except ImportError:
-    from hermes_nerve import assistant, client, context, experience, gate, ledger, nervous, receipts, schemas, selective_context, tools
+    from hermes_nerve import assistant, advisory, client, context, experience, gate, ledger, nervous, receipts, schemas, selective_context, tools
     from hermes_nerve import reflex
     from hermes_nerve.config_resolver import resolve_config
     from hermes_nerve import context_engine as nerve_context_engine
@@ -374,9 +374,8 @@ def _register_legacy(ctx):
         work_hooks.on_session_end(**kwargs)
         if not headless_worker:
             nervous.on_session_end(**kwargs)
-        from . import advisory as _advisory
-        _advisory.shutdown()
-        _advisory.write_health_snapshot()
+        advisory.shutdown()
+        advisory.write_health_snapshot()
 
     ctx.register_hook("pre_tool_call", _pre_tool_control)
     ctx.register_hook("post_tool_call", work_hooks.post_tool_call)
@@ -697,9 +696,8 @@ def _register_profile(ctx):
     def _session_end(**kwargs):
         if policy.enabled("work_supervision"):work_hooks.on_session_end(**kwargs)
         if not headless_worker and policy.enabled("nervous"):nervous.on_session_end(**kwargs)
-        from . import advisory as _advisory
-        _advisory.shutdown()
-        _advisory.write_health_snapshot()
+        advisory.shutdown()
+        advisory.write_health_snapshot()
 
     pre_tool_needed=policy.enabled("remote_workers") or policy.enabled("work_supervision") or (not headless_worker and (policy.enabled("nervous") or policy.enabled("action_gate")))
     if pre_tool_needed:ctx.register_hook("pre_tool_call",_pre_tool_control)
@@ -805,6 +803,34 @@ def _register_profile(ctx):
         if os.getenv("HERMES_NERVE_OFFLINE_VERIFY")=="1":logger.info("%s (offline verifier: not applicable)",message)
         else:logger.warning(message)
 
+def _record_runtime_activation(policy):
+    """Record loaded policy/code capabilities; saved YAML is not live truth.
+
+    No tokens, identifiers, tool arguments, message bodies or provider calls.
+    The snapshot is telemetry, never an approval or a configuration writer.
+    """
+    import json
+    import time
+    snapshot = {
+        "schema": "nerve-runtime-activation/v1", "pid": os.getpid(),
+        "activated_at": time.time(), "version": VERSION,
+        "profile": policy.profile, "gate_mode": gate.gate_mode(),
+        "reflex_backend": reflex.settings().get("backend"),
+        "scope_fix": "copy_context" in advisory.run_bounded.__code__.co_names,
+        "queue_scope_fix": "copy_context" in advisory.submit.__code__.co_names,
+        "sidecar_override_keys": sorted(policy.advanced),
+        "ignored_settings_profile": policy.ignored_settings_profile,
+    }
+    try:
+        path = advisory.hermes_home() / "nerve" / "runtime-activation.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".json.new")
+        temporary.write_text(json.dumps(snapshot, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        logger.warning("Nerve effective-runtime snapshot could not be persisted")
+
+
 def register(ctx):
     """Register exact v0.2.3 Legacy behavior or the selected modular profile."""
     if not callable(getattr(ctx, "get_config", None)):
@@ -821,5 +847,8 @@ def register(ctx):
     _warn_if_legacy_settings_ignored(ctx)
     policy = resolve_config(ctx.get_config)
     if policy.profile == "legacy":
-        return _register_legacy(ctx)
-    return _register_profile(ctx)
+        result = _register_legacy(ctx)
+    else:
+        result = _register_profile(ctx)
+    _record_runtime_activation(policy)
+    return result
