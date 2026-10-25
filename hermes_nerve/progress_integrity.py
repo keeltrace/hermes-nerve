@@ -284,11 +284,17 @@ def looks_like_api_field(path: str) -> bool:
 def requested_paths(user_message: str) -> tuple[str, ...]:
     seen: list[str] = []
     cleaned = str(user_message or "")
+    # Uploaded instruction documents are inputs, not output edit targets.
+    # Strip only transport-envelope lines; keep explicit paths in the task body.
+    attachment_header = r"(?m)^\[The user sent a text document: [^\r\n]*\]\r?$"
+    if re.search(attachment_header, cleaned):
+        cleaned = re.sub(attachment_header, "", cleaned)
+        cleaned = re.sub(r"(?m)^\[Content of [^\r\n]*\]:\r?$", "", cleaned)
     cleaned = re.sub(r"@?url:[^\s]+", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"https?://[^\s`]+", "", cleaned, flags=re.IGNORECASE)
     for match in PATH_RE.finditer(cleaned):
         raw = match.group(1)
-        if re.fullmatch(r"\d+(?:\.\d+)+", raw):
+        if re.fullmatch(r"v?\d+(?:\.\d+)+", raw, flags=re.IGNORECASE):
             continue
         # Numeric ranges such as Python 3.10-3.14 are not requested files.
         # Retain explicit files, including ./3.10-3.14 or "file 3.10-3.14".

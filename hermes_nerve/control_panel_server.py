@@ -42,14 +42,22 @@ def make_handler(panel: ControlPanel, session_token: str):
                 " base-uri 'none'; frame-ancestors 'none'",
             )
 
+        def _send_payload(self, code, payload, content_type):
+            try:
+                self.send_response(code)
+                self._headers()
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError):
+                # A browser reload/close is not an application failure; there
+                # is no peer left to receive a second error response.
+                self.close_connection = True
+
         def _reply(self, code, data):
             payload = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
-            self.send_response(code)
-            self._headers()
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_payload(code, payload, "application/json; charset=utf-8")
 
         def _authorization(self, write=False):
             if self.headers.get("Host") != "127.0.0.1:" + str(self.server.server_port):
@@ -79,13 +87,7 @@ def make_handler(panel: ControlPanel, session_token: str):
                         raise PanelError("Invalid local Host header.", 403)
                     filename, content_type = ASSETS[path]
                     payload = (Path(__file__).parent / "web" / filename).read_bytes()
-                    self.send_response(200)
-                    self._headers()
-                    self.send_header("Content-Type", content_type)
-                    self.send_header("Content-Length", str(len(payload)))
-                    self.end_headers()
-                    self.wfile.write(payload)
-                    return
+                    return self._send_payload(200, payload, content_type)
                 self._authorization()
                 if path == "/api/status":
                     return self._reply(200, panel.status())
