@@ -128,7 +128,7 @@ class TestVersionMismatchIsRejected:
             cat = dst / "packaging" / "hermes-catalog" / "nerve.yaml"
             original = cat.read_text()
             try:
-                cat.write_text(original.replace("0.4.14", "0.3.2.2"))
+                cat.write_text(original.replace(EXPECTED_VERSION, "0.3.2.2"))
                 r = subprocess.run(
                     [sys.executable, str(dst / "scripts" / "verify_release.py")],
                     cwd=str(dst),
@@ -145,13 +145,13 @@ class TestVersionMismatchIsRejected:
 
 
 class TestVersionSourcesAgree:
-    """GREEN: the real release identity sources agree at 0.4.14."""
+    """GREEN: the real release identity sources agree at the declared candidate."""
 
     def test_verify_release_passes_end_to_end(self):
         result = _run_verifier_subprocess()
         assert result.returncode == 0, result.stdout + result.stderr
         assert f"version={EXPECTED_VERSION}" in result.stdout
-        assert "catalog_version=0.4.14" in result.stdout
+        assert f"catalog_version={EXPECTED_VERSION}" in result.stdout
 
     def test_resolve_package_version_honors_dynamic_declaration(self):
         verifier = _load_verifier()
