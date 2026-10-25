@@ -9,6 +9,7 @@
   disabled ones, so operators can enable them without opening Advanced.
 - Removed the false-positive progress-integrity file target for bare dotted
   version ranges such as Python 3.10-3.14, while preserving explicit file paths.
+- Added a portable, private-path-free replay of the KEE-804 heartbeat guard from PR #59.
 - Incorporated @rharmanca's PR #73 verification hardening: additional test
   runners, whole-word failure detection, and rejection of masked success exits.
 - Preserved v0.4.14 publication as an immutable, older release. Context Bus
