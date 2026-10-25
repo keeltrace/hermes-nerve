@@ -98,6 +98,12 @@ TERMINAL_MUTATION_PREFIXES = (
 TERMINAL_TEST_PREFIXES = (
     "pytest", "python -m pytest", "python3 -m pytest", "python -m unittest",
     "python3 -m unittest", "npm test", "pnpm test", "yarn test", "go test", "cargo test",
+    "py.test", "tox", "nox", "make test", "make check", "jest", "vitest", "mocha",
+    "bun test", "deno test", "npx jest", "npx vitest", "npx mocha",
+    "pnpm exec jest", "pnpm exec vitest", "dotnet test", "mvn test",
+    "gradle test", "./gradlew test", "rspec", "bundle exec rspec",
+    "phpunit", "vendor/bin/phpunit", "mix test", "swift test", "ctest",
+    "pytest.exe",
 )
 ENV_SETUP_PREFIXES = (
     "pip install", "pip3 install", "python -m pip install", "python3 -m pip install",
@@ -393,12 +399,25 @@ _LAUNCHER_RE = re.compile(
     r"|conda\s+run(?:\s+(?:-n|--name|-p|--prefix)\s+\S+)*"
     r")\s+"
 )
+# Only an actual shell -c wrapper is unwrapped, not arbitrary argument strings.
+_SHELL_WRAP_RE = re.compile(r"^(?:bash|sh|zsh|dash)\s+-c\s+(['\"])(.*?)\1\s*$")
+_TEST_SCRIPT_RE = re.compile(
+    r"^(?:\./|bash\s+|sh\s+)?(?:\S+/)?(?:run[_-]?tests?|tests?|check)"
+    r"(?:\.(?:sh|bash|py))?(?:\s|$)"
+)
+_WINDOWS_PYTEST_RE = re.compile(
+    r"(?:^|\s)[a-z]:\\[^\s'\"\n]+\\(?:pytest|py\.test)\.exe(?:\s|$)",
+    re.IGNORECASE,
+)
 
 
 def _strip_command_prefix(segment: str) -> str:
     """Normalize assignments, environment launchers and interpreter paths."""
     segment = _ENV_ASSIGN_RE.sub("", segment)
     segment = _LAUNCHER_RE.sub("", segment)
+    wrapped = _SHELL_WRAP_RE.fullmatch(segment)
+    if wrapped:
+        return _strip_command_prefix(wrapped.group(2).strip())
     segment = _PYTHON_PATH_RE.sub(lambda m: m.group(1), segment)
     return segment
 
@@ -410,16 +429,32 @@ def tool_kind(tool_name: str, args: dict[str, Any] | None = None) -> str:
             return kind
     if selected != "terminal":
         return ""
-    for segment in _shell_segments(str((args or {}).get("command") or "")):
+    command = str((args or {}).get("command") or "")
+    # shlex treats backslashes as escapes on POSIX; recognize the fully
+    # qualified Windows pytest executable before splitting it.
+    if _WINDOWS_PYTEST_RE.search(command):
+        return "test"
+    for segment in _shell_segments(command):
         segment = _strip_command_prefix(segment)
         if any(segment == p.strip() or segment.startswith(p) for p in TERMINAL_MUTATION_PREFIXES):
             return "mutation"
         if ">" in segment and not any(op in segment for op in (">=", "2>", "&>")):
             return "mutation"
-        if _python_test_command(segment) or any(segment == p or segment.startswith(p + " ") for p in TERMINAL_TEST_PREFIXES):
+        if (_python_test_command(segment)
+                or any(segment == p or segment.startswith(p + " ") for p in TERMINAL_TEST_PREFIXES)
+                or _TEST_SCRIPT_RE.match(segment)):
             return "test"
 
     return ""
+
+
+def test_result_masked(command: str) -> bool:
+    """Never accept a successful shell exit obtained by masking test failure."""
+    raw = str(command or "").lower()
+    if re.search(r"\|\|\s*(?:true\b|:(?=\s|$)|exit\s+0(?:\s|$))", raw):
+        return True
+    return bool(re.search(r";\s*(?:true|exit\s+0)\s*$", raw))
+
 
 
 
@@ -510,6 +545,11 @@ def changed_paths_relevant(changed_paths: list[str] | tuple[str, ...], requested
 
 _NO_TESTS_RE = re.compile(r"no tests ran|collected 0 items|\bran 0 tests?\b|\b0 passed\b|no tests (were )?(found|collected)")
 _ZERO_FAILURE_RE = re.compile(r"\b0 (failed|failures?|errors?)\b|failures?=0|errors?=0")
+# Complete failure words, not embedded tokens in passing test IDs such as
+# tests/test_error_handling.py or ErrorHandler.test.js.
+_FAIL_WORD_RE = re.compile(
+    r"(?<![\w.-])(?:fail|failed|failure|failures|error|errors)(?![\w.-])"
+)
 
 
 def test_succeeded(status: str, result: str = "", error_message: str = "") -> bool:
@@ -535,7 +575,7 @@ def test_succeeded(status: str, result: str = "", error_message: str = "") -> bo
     if _NO_TESTS_RE.search(text):
         return False
     text = _ZERO_FAILURE_RE.sub(" ", text)
-    return not any(token in text for token in ("failed", "failure", "error", "traceback"))
+    return "traceback" not in text and not _FAIL_WORD_RE.search(text)
 
 
 def _normalize_path(value: str) -> str:

@@ -68,6 +68,30 @@ class ProgressIntegrityQolTests(unittest.TestCase):
             ("3.10-3.14", "src/3.10-3.14.py", "3.11-3.13"),
         )
 
+    def test_masked_test_result_cannot_satisfy_completion_verification(self):
+        with tempfile.TemporaryDirectory() as td:
+            system = self._system(td)
+            system.start_turn(
+                user_message="Fix src/parser.py and run regression tests",
+                session_id="masked-s", turn_id="masked-t",
+            )
+            system.observe_tool_call(
+                tool_name="terminal", args={"command": "pytest -q || true"},
+                status="ok",
+                result='{"output":"3 passed in 0.01s","exit_code":0,"error":null}',
+                error_message="", tool_call_id="masked",
+                session_id="masked-s", turn_id="masked-t",
+            )
+            self.assertEqual(system.status(turn_id="masked-t")["verified_test_passes"], 0)
+            system.observe_tool_call(
+                tool_name="terminal", args={"command": "pytest -q"},
+                status="ok",
+                result='{"output":"3 passed in 0.01s","exit_code":0,"error":null}',
+                error_message="", tool_call_id="real",
+                session_id="masked-s", turn_id="masked-t",
+            )
+            self.assertEqual(system.status(turn_id="masked-t")["verified_test_passes"], 1)
+
     def test_scratch_mutation_does_not_clear_progress_stall(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
             "HERMES_NERVE_NERVOUS_EVENTS": str(Path(td) / "nervous.jsonl"),

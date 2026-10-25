@@ -9,6 +9,8 @@
   disabled ones, so operators can enable them without opening Advanced.
 - Removed the false-positive progress-integrity file target for bare dotted
   version ranges such as Python 3.10-3.14, while preserving explicit file paths.
+- Incorporated @rharmanca's PR #73 verification hardening: additional test
+  runners, whole-word failure detection, and rejection of masked success exits.
 - Preserved v0.4.14 publication as an immutable, older release. Context Bus
   code inclusion is authorized by the owner, and contributor credits remain.
 - See PR #75 for the release acceptance ledger. Native upgrade/rollback
