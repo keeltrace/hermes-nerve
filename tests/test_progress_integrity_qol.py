@@ -53,6 +53,21 @@ class ProgressIntegrityQolTests(unittest.TestCase):
             with self.subTest(msg=msg):
                 self.assertEqual(requested_paths(msg), expected)
 
+    def test_bare_python_version_ranges_are_not_file_targets(self):
+        targets = requested_paths(
+            "Support Python 3.10-3.14 and 3.11-3.13; fix src/parser.py."
+        )
+        self.assertEqual(targets, ("src/parser.py",))
+        # Explicitly named files are still protected even if their names
+        # happen to resemble version ranges.
+        explicit = requested_paths(
+            "Edit file 3.10-3.14 and fix src/3.10-3.14.py and ./3.11-3.13."
+        )
+        self.assertEqual(
+            explicit,
+            ("3.10-3.14", "src/3.10-3.14.py", "3.11-3.13"),
+        )
+
     def test_scratch_mutation_does_not_clear_progress_stall(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(os.environ, {
             "HERMES_NERVE_NERVOUS_EVENTS": str(Path(td) / "nervous.jsonl"),

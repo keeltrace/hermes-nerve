@@ -280,9 +280,18 @@ def requested_paths(user_message: str) -> tuple[str, ...]:
     cleaned = str(user_message or "")
     cleaned = re.sub(r"@?url:[^\s]+", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"https?://[^\s`]+", "", cleaned, flags=re.IGNORECASE)
-    for raw in PATH_RE.findall(cleaned):
+    for match in PATH_RE.finditer(cleaned):
+        raw = match.group(1)
         if re.fullmatch(r"\d+(?:\.\d+)+", raw):
             continue
+        # Numeric ranges such as Python 3.10-3.14 are not requested files.
+        # Retain explicit files, including ./3.10-3.14 or "file 3.10-3.14".
+        if re.fullmatch(r"\d+(?:\.\d+)+-\d+(?:\.\d+)+", raw):
+            lead = cleaned[max(0, match.start(1) - 40):match.start(1)]
+            if not (lead.endswith("./") or re.search(
+                r"(?:file|path|filename|target|named)\s+[`\\\"']?$", lead, re.IGNORECASE
+            )):
+                continue
         path = _normalize_path(raw)
         # Assignments often abbreviate file lists as gate.py/risk.py. Treat
         # all-filename source lists as separate targets, not an impossible

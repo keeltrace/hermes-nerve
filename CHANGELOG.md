@@ -1,3 +1,20 @@
+## 0.4.15 — October 25, 2026
+
+- Fixed the Nerve-only packaging metadata that caused normal Hermes updates
+  to disable Nerve across profiles: optional Laya/Torch dependencies are kept
+  in explicit isolated model sidecars, not the shared Hermes uv workspace.
+- Updated release-verifier tests and developer guidance to forbid all
+  installable Nerve dependency extras/groups during normal Hermes updates.
+- Full Configuration now displays every registered Nerve module, including
+  disabled ones, so operators can enable them without opening Advanced.
+- Removed the false-positive progress-integrity file target for bare dotted
+  version ranges such as Python 3.10-3.14, while preserving explicit file paths.
+- Preserved v0.4.14 publication as an immutable, older release. Context Bus
+  code inclusion is authorized by the owner, and contributor credits remain.
+- See PR #75 for the release acceptance ledger. Native upgrade/rollback
+  and real post-update profile re-enablement still require validation before
+  declaring installed rollout complete.
+
 ## Unreleased — normal Hermes update dependency isolation
 
 - Prevented ordinary Hermes upgrades from disabling Nerve when optional ML

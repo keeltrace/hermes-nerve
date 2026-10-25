@@ -227,10 +227,9 @@ class ControlPanel:
         views = {}
         for name in PROFILE_NAMES:
             if name == "custom":
-                # Full Configuration always mirrors the live module state:
-                # switching into custom from another profile must show the
-                # full current selection, never an empty primary list.
-                primary = sorted(k for k, on in cfg.modules.items() if on)
+                # Full Configuration is the complete registry, not just
+                # currently enabled modules: OFF modules must be toggleable.
+                primary = sorted(MODULES)
             elif name == "legacy":
                 primary = sorted(k for k, on in cfg.modules.items() if on) \
                     if cfg.profile == "legacy" else []

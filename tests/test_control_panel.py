@@ -31,6 +31,19 @@ class PanelTests(unittest.TestCase):
         self.assertFalse((self.home / "nerve" / "profile.json").exists())
         self.assertIn("verified_experience", {m["id"] for m in before["modules"]})
 
+    def test_full_configuration_lists_every_module_including_off(self):
+        info = self.panel.status()
+        all_ids = {m["id"] for m in info["modules"]}
+        custom = info["views"]["custom"]
+        self.assertEqual(set(custom["primary_modules"]), all_ids)
+        self.assertEqual(len(custom["primary_modules"]), len(all_ids))
+        self.assertTrue(all_ids - {k for k, on in info["current"]["modules"].items() if on})
+        preview = self.panel.preview(
+            {"profile": "custom", "overrides": {"remote_workers": False}, "advanced": {}}
+        )
+        self.assertIn("remote_workers", preview["modules"])
+        self.assertFalse(preview["modules"]["remote_workers"])
+
     def test_status_exposes_read_only_runtime_identity(self):
         identity = self.panel.status()["runtime_identity"]
         self.assertIn(identity["status"], {"MATCH", "DRIFT", "UNKNOWN"})

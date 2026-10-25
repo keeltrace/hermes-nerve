@@ -202,7 +202,8 @@ function profileView() {
 }
 function visibleModules() {
   const all = state.info.modules;
-  if (state.showAdvanced) return all;
+  // Full Configuration must show every ON and OFF module by default.
+  if (state.profile === "custom" || state.showAdvanced) return all;
   const view = profileView();
   if (!view) return all;
   const primary = new Set(view.primary_modules);
@@ -278,7 +279,7 @@ function featuresPage() {
     html += '<div class="notice warning">Legacy is a compatibility path. Switch to a named profile to control individual features.</div>';
     html += '<button class="btn secondary small" id="migrate-legacy" type="button">Migrate to Operator profile</button>';
   }
-  if (!state.showAdvanced) {
+  if (!state.showAdvanced && state.profile !== "custom") {
     html += '<p class="feature-footnote">Use Advanced controls to see all ' + state.info.modules.length + ' modules, including any not shown for this profile.</p>';
   }
   if (state.preview && state.preview.pruned.length) {

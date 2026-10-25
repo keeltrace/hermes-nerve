@@ -34,7 +34,7 @@ import unittest
 
 if tomllib is None:
     raise unittest.SkipTest("tomllib requires Python 3.11+; release-verifier identity contract is covered on 3.11+")
-EXPECTED_VERSION = "0.4.14"
+EXPECTED_VERSION = "0.4.15"
 
 
 def _load_verifier():
