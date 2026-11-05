@@ -12,6 +12,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
+from urllib.parse import SplitResult, urlsplit
 
 from ..client import scoped_timeout
 
@@ -24,6 +25,35 @@ D1_DEFAULT_MODEL = "LiquidAI/d1-3B"
 
 class SystemOneHTTPError(RuntimeError):
     pass
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so local decision state cannot be egressed off-host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise SystemOneHTTPError(
+            "System One endpoint returned a redirect; refusing to follow it off the local endpoint"
+        )
+
+
+def _local_opener() -> urllib.request.OpenerDirector:
+    # Local decision state must not leave through proxies or redirects.
+    # Remote HTTPS transports retain their existing urllib behavior.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
+
+
+def _loopback_endpoint(url: str) -> SplitResult | None:
+    try:
+        endpoint = urlsplit(url)
+        if (endpoint.scheme in {'http', 'https'}
+                and endpoint.hostname in {'127.0.0.1', 'localhost', '::1'}):
+            return endpoint
+    except ValueError:
+        pass
+    return None
+
+
+_OPENER = _local_opener()
 
 
 @dataclass(frozen=True)
@@ -101,7 +131,8 @@ class SystemOneHTTPClient:
     def _urllib_transport(url: str, headers: dict[str, str], body: bytes, timeout: float):
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            opener = _OPENER.open if _loopback_endpoint(url) is not None else urllib.request.urlopen
+            with opener(request, timeout=timeout) as response:
                 return (
                     int(response.status),
                     response.read(),

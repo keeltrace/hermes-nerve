@@ -4,16 +4,64 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import math
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from .client import JevClient, JevError
-from .privacy import redact
+from .privacy import canonical_hash, redact
 from .receipts import write_receipt
 from .provenance import execution_provenance, result_provenance
 
 
+class DecisionResponse(Protocol):
+    @property
+    def model(self) -> str: ...
+    @property
+    def answers(self) -> dict[str, dict[str, Any]]: ...
+    @property
+    def usage(self) -> dict[str, Any]: ...
+    @property
+    def latency_ms(self) -> float: ...
+    @property
+    def request_id(self) -> str: ...
+    @property
+    def provider(self) -> str: ...
+
+
 class DecisionProvider(Protocol):
-    def system_one(self, *, state: Any, questions: dict[str, dict[str, Any]], model: str | None = None): ...
+    def system_one(self, *, state: Any, questions: dict[str, dict[str, Any]],
+                   model: str | None = None) -> DecisionResponse: ...
+
+
+class ImageDecisionProvider(DecisionProvider, Protocol):
+    def system_one(self, *, state: Any, questions: dict[str, dict[str, Any]],
+                   model: str | None = None,
+                   images: list[str] | tuple[str, ...] | None = None) -> DecisionResponse: ...
+
+
+def _normalize_image_state(state: Any, images: Any) -> Any:
+    """Local D1/SystemOne rejects a null state for image requests.
+
+    An absent/None state on an image request is normalized to an empty string
+    rather than inventing content. Text-only requests are untouched.
+    """
+    if images and state is None:
+        return ""
+    return state
+
+
+def _image_receipt_state(state: Any, images: Any) -> Any:
+    """Bind image content hashes into receipt state without storing image bytes.
+
+    The hashes cover the exact encoded data URLs sent to the provider, so a
+    receipt is bound to the images that produced it while the ledger keeps only
+    a digest.
+    """
+    if not images:
+        return state
+    digests = [canonical_hash(str(image)) for image in images]
+    # Keep provider-visible state intact, including any caller-owned hash keys.
+    # A separate envelope prevents that state from overriding evidence binding.
+    return {"state": state, "image_sha256": digests}
 
 
 @dataclass(frozen=True)
@@ -84,12 +132,18 @@ class DecisionEngine:
         if images:
             if not bool(getattr(self.provider, "supports_images", False)):
                 raise ValueError("configured decision provider does not support image input")
-            return self.provider.system_one(
-                state=state,
-                questions=questions,
-                model=model,
-                images=list(images),
-            )
+            image_provider = cast(ImageDecisionProvider, self.provider)
+            try:
+                return image_provider.system_one(
+                    state=state,
+                    questions=questions,
+                    model=model,
+                    images=list(images),
+                )
+            except Exception:
+                # Local error bodies can echo encoded image input. Do not send
+                # those bytes back into the primary model's tool context.
+                raise JevError('Image decision failed; inspect the local backend logs') from None
         return self.provider.system_one(state=state, questions=questions, model=model)
 
     @staticmethod
@@ -146,7 +200,7 @@ class DecisionEngine:
         images: list[str] | tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         """Ask one or more native Jev typed questions in a single request."""
-        safe_state = redact(state)
+        safe_state = redact(_normalize_image_state(state, images))
         safe_questions = redact(self._validate_questions(questions))
         response = self._system_one(state=safe_state, questions=safe_questions, images=images)
         if not isinstance(getattr(response, "answers", None), dict):
@@ -170,7 +224,7 @@ class DecisionEngine:
                 request_id=response.request_id,
             ),
         }
-        receipt = write_receipt(contract=contract, state=safe_state, result=result, model=response.model, latency_ms=response.latency_ms)
+        receipt = write_receipt(contract=contract, state=_image_receipt_state(safe_state, images), result=result, model=response.model, latency_ms=response.latency_ms)
         return dict(receipt["result"])
 
     def decide(
@@ -186,7 +240,7 @@ class DecisionEngine:
         labels = [str(item).strip() for item in choices if str(item).strip()]
         if len(labels) < 2 or len(set(labels)) != len(labels):
             raise ValueError("choices must contain at least two unique non-empty labels")
-        safe_state = redact(state)
+        safe_state = redact(_normalize_image_state(state, images))
         mapped = {label: (criteria or {}).get(label) for label in labels}
         response = self._system_one(
             state=safe_state,
@@ -231,7 +285,7 @@ class DecisionEngine:
             transport=getattr(response, "transport", "openrouter-decisions"),
             live_provider_call=bool(getattr(response, "live_provider_call", True)),
         )
-        receipt = write_receipt(contract=contract, state=safe_state, result=result.as_dict(), model=response.model, latency_ms=response.latency_ms)
+        receipt = write_receipt(contract=contract, state=_image_receipt_state(safe_state, images), result=result.as_dict(), model=response.model, latency_ms=response.latency_ms)
         stored = receipt["result"]
         return replace(
             result,

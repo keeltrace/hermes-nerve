@@ -64,6 +64,53 @@ engine.decide(
 
 This enables independent visual supervision of browser/computer-use flows, rendered CAD, confirmation dialogs, and other UI state while retaining the same typed decision and authority boundary.
 
+### Native tools: local image files
+
+`nerve_assess`, `nerve_decide`, and `nerve_rank` accept optional `image_paths`.
+They require an image-capable **loopback System One/D1** backend; hosted and
+shadow backends are refused before files are read. Use `reflex_backend: d1`
+for this local-file path, not the hosted-primary shadow configuration above.
+
+```json
+{
+  "state": "",
+  "image_paths": ["/path/to/screenshot.png"],
+  "questions": {
+    "dialog": {
+      "type": "choice",
+      "instructions": "Which dialog is visible?",
+      "criteria": {"save": "Save confirmation", "delete": "Delete confirmation"}
+    }
+  }
+}
+```
+
+Supply this object to `nerve_assess`. Image-only `null` state is normalized to
+an empty string for runtimes that reject null. This does not enable automatic
+screenshot capture or approval of the depicted action.
+
+- Up to four PNG/JPEG/WebP files, at most 6,000,000 bytes per file, with encoded
+  limits of 8,000,000 characters per image and 16,000,000 total.
+- Header signatures are checked; image decoding remains the model runtime's
+  responsibility. Remote image URLs, symlinks, non-regular files and raced file
+  replacements are refused. The combined text/image/question token budget
+  must still fit the runtime's configured batch/window.
+- Images are inlined locally, without environment proxies or redirects. Remote
+  HTTPS clients retain their existing transport behavior; native local-file
+  inputs are not available to those clients. The local backend remains a trusted
+  peer responsible for returning valid typed answers. Raw
+  bytes and paths are not added to Nerve receipts or provider-error tool results.
+  Image hashes are bound into a separate receipt-state envelope so caller state
+  cannot override the binding. Normal text-only receipt hashing is unchanged.
+- `nerve_verify` retains its existing native schema. No enforcement, approval,
+  or automatic screenshot policy is changed by adding image input.
+
+Select the actual loaded model identifier rather than assuming the preset
+default. For example, LM Studio can index `LiquidAI/d1-2B-GGUF` as `d1-2b`.
+The d1-2B GGUF runtime supports text/JSON, images and noul/choice/score, but
+not all features advertised for the Transformers checkpoint (video, extraction,
+multiple-choice selection, or boxes). Check the model/runtime documentation.
+
 ## Smoke check
 
 ```bash
@@ -71,6 +118,51 @@ python scripts/check_systemone_sidecar.py --d1 --base-url http://127.0.0.1:8080 
 ```
 
 The probe makes one `noul` request and prints the served model, transport, latency, answer, and usage.
+
+## LM Studio: d1-2B GGUF interoperability example
+
+LM Studio can serve `LiquidAI/d1-2B-GGUF` through its native `/v1/systemone`
+endpoint. Discover the installed key and loaded instance with
+`GET /api/v1/models`; a repository name is not necessarily the request model
+identifier. In one tested installation the identifier was `d1-2b`, with
+`d1-2B-Q4_K_M.gguf` and `mmproj-d1-2B-F16.gguf`.
+
+The existing short probe can check that instance without changing Nerve settings:
+
+```bash
+python scripts/check_systemone_sidecar.py --d1 \
+  --base-url http://127.0.0.1:1234 --model d1-2b --expected-identity d1-2b
+```
+
+Read back **context length, evaluation batch and physical batch separately**.
+A large context setting alone did not allow a request above 8,192 input tokens
+when physical batch was still 8,192. A tested, hardware-dependent configuration
+was:
+
+```json
+{
+  "context_length": 16384,
+  "eval_batch_size": 16384,
+  "physical_batch_size": 16384,
+  "parallel": 1,
+  "flash_attention": true,
+  "offload_kv_cache_to_gpu": true
+}
+```
+
+This is an example, not a model-independent default or an instruction to reload
+an active instance. Check available memory and runtime limits first. The model's
+advertised maximum window does not establish that a full-window request fits the
+server's inference deadline. A longer client timeout also does not override
+shorter host supervisory budgets or the model server's own timeout.
+
+Before treating a deployment as usable, check `noul`, `choice` and `score`, then
+opposite synthetic images and a long synthetic state. Confirm the returned model
+identity and the reported `usage.input_tokens`, not just an HTTP 200 or the number
+of padding words. Keep these as interoperability checks, not evidence of calibrated
+Nerve decisions or permission to enable enforcement. Any desktop startup/model
+recovery automation belongs outside Nerve and should remain opt-in and scoped to
+the intended model instance.
 
 ## Matrix
 
