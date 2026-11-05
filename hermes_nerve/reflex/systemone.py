@@ -26,6 +26,26 @@ class SystemOneHTTPError(RuntimeError):
     pass
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so local decision state cannot be egressed off-host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise SystemOneHTTPError(
+            "System One endpoint returned a redirect; refusing to follow it off the local endpoint"
+        )
+
+
+def _local_opener() -> urllib.request.OpenerDirector:
+    # The System One/D1 endpoint is a loopback transport that may carry local
+    # image bytes. Environment proxies (http_proxy/https_proxy) and redirects
+    # would let a compromised or misconfigured local endpoint egress that data,
+    # so both are disabled here without asking the operator to relax anything.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
+
+
+_OPENER = _local_opener()
+
+
 @dataclass(frozen=True)
 class SystemOneHTTPResponse:
     model: str
@@ -101,7 +121,7 @@ class SystemOneHTTPClient:
     def _urllib_transport(url: str, headers: dict[str, str], body: bytes, timeout: float):
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _OPENER.open(request, timeout=timeout) as response:
                 return (
                     int(response.status),
                     response.read(),

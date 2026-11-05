@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import os
+import stat
+from pathlib import Path
 
 from .context import curate_context
 from .engine import DecisionEngine
@@ -60,14 +64,101 @@ def _error(exc: Exception) -> str:
     }, sort_keys=True)
 
 
+# Local image input is deliberately narrow: it only reads a few bounded local
+# image files and inlines them as data URLs, and only for a loopback SystemOne/D1
+# backend. It never fetches a URL, and image bytes never enter the tool result.
+_MAX_IMAGE_COUNT = 4
+_MAX_IMAGE_BYTES = 6_000_000
+_MAX_ENCODED_CHARS = 8_000_000
+_MAX_TOTAL_ENCODED_CHARS = 16_000_000
+
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+
+
+def _sniff_image_mime(data: bytes) -> str | None:
+    for magic, mime in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return mime
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _load_local_images(engine, raw) -> list[str] | None:
+    """Inline bounded local PNG/JPEG/WebP files as data URLs for a local backend.
+
+    Returns ``None`` when no image paths were supplied so text-only behavior is
+    byte-for-byte unchanged. Provider image support is validated *before* any
+    filesystem access. Error messages never include local paths or image bytes.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError("image_paths must be an array of local file paths")
+    if not raw:
+        return None
+    if not bool(getattr(getattr(engine, "provider", None), "supports_images", False)):
+        raise ValueError(
+            "image_paths is LOCAL ONLY and requires a loopback SystemOne or D1 decision "
+            "backend; hosted providers and shadow fallback do not support local image input"
+        )
+    if len(raw) > _MAX_IMAGE_COUNT:
+        raise ValueError(f"image_paths may contain at most {_MAX_IMAGE_COUNT} local images")
+
+    images: list[str] = []
+    total = 0
+    for index, item in enumerate(raw):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"image_paths[{index}] must be a non-empty local file path string")
+        path = Path(item).expanduser()
+        try:
+            info = os.lstat(path)
+        except OSError:
+            raise ValueError(f"image_paths[{index}] could not be read as a local file")
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"image_paths[{index}] must be a regular local file")
+        if info.st_size > _MAX_IMAGE_BYTES:
+            raise ValueError(
+                f"image_paths[{index}] exceeds the {_MAX_IMAGE_BYTES} byte local image limit"
+            )
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read(_MAX_IMAGE_BYTES + 1)
+        except OSError:
+            raise ValueError(f"image_paths[{index}] could not be read as a local file")
+        if len(data) > _MAX_IMAGE_BYTES:
+            raise ValueError(
+                f"image_paths[{index}] exceeds the {_MAX_IMAGE_BYTES} byte local image limit"
+            )
+        mime = _sniff_image_mime(data)
+        if mime is None:
+            raise ValueError(f"image_paths[{index}] must be a PNG, JPEG, or WebP image")
+        data_url = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+        if len(data_url) > _MAX_ENCODED_CHARS:
+            raise ValueError(
+                f"image_paths[{index}] encoded size exceeds the {_MAX_ENCODED_CHARS} character limit"
+            )
+        total += len(data_url)
+        if total > _MAX_TOTAL_ENCODED_CHARS:
+            raise ValueError("image_paths encoded total exceeds the local image budget")
+        images.append(data_url)
+    return images
+
+
 def nerve_decide(args: dict, **kwargs) -> str:
     try:
-        result = _engine().decide(
+        engine = _engine()
+        images = _load_local_images(engine, args.get("image_paths"))
+        result = engine.decide(
             state=args.get("state"),
             instructions=str(args.get("instructions") or "").strip(),
             choices=list(args.get("choices") or []),
             criteria=args.get("criteria") if isinstance(args.get("criteria"), dict) else None,
             contract=str(args.get("contract") or "decision/v1"),
+            images=images,
         )
         return _ok(result.as_dict())
     except Exception as exc:  # handlers must return errors, not raise through Hermes
@@ -79,11 +170,14 @@ def nerve_rank(args: dict, **kwargs) -> str:
         items = args.get("items")
         if not isinstance(items, dict) or len(items) < 2:
             raise ValueError("items must be an object with at least two candidates")
-        result = _engine().rank(
+        engine = _engine()
+        images = _load_local_images(engine, args.get("image_paths"))
+        result = engine.rank(
             state=args.get("state"),
             instructions=str(args.get("instructions") or "").strip(),
             items=items,
             contract=str(args.get("contract") or "rank/v1"),
+            images=images,
         )
         return _ok(result)
     except Exception as exc:
@@ -110,10 +204,13 @@ def nerve_assess(args: dict, **kwargs) -> str:
         questions = args.get("questions")
         if not isinstance(questions, dict):
             raise ValueError("questions must be an object")
-        result = _engine().assess(
+        engine = _engine()
+        images = _load_local_images(engine, args.get("image_paths"))
+        result = engine.assess(
             state=args.get("state"),
             questions=questions,
             contract=str(args.get("contract") or "assess/v1"),
+            images=images,
         )
         return _ok(result)
     except Exception as exc:
