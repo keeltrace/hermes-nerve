@@ -7,11 +7,10 @@ import json
 import os
 import stat
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from .context import curate_context
 from .engine import DecisionEngine
-from .reflex.systemone import SystemOneHTTPClient
+from .reflex.systemone import SystemOneHTTPClient, _loopback_endpoint
 from . import assistant, experience, gate, ledger, lifecycle, receipts, nervous, selective_context
 from .provenance import execution_provenance, result_provenance, runtime_identity
 
@@ -68,7 +67,7 @@ def _error(exc: Exception) -> str:
 
 # Local image input is deliberately narrow: it only reads a few bounded local
 # image files and inlines them as data URLs, and only for a loopback SystemOne/D1
-# backend. It never fetches a URL, and image bytes never enter the tool result.
+# backend. The loader never fetches a URL or adds image bytes to tool results.
 _MAX_IMAGE_COUNT = 4
 _MAX_IMAGE_BYTES = 6_000_000
 _MAX_ENCODED_CHARS = 8_000_000
@@ -89,7 +88,7 @@ def _sniff_image_mime(data: bytes) -> str | None:
     return None
 
 
-def _load_local_images(engine, raw) -> list[str] | None:
+def _load_local_images(engine: DecisionEngine, raw: object) -> list[str] | None:
     """Inline bounded local PNG/JPEG/WebP files as data URLs for a local backend.
 
     Returns ``None`` when no image paths were supplied so text-only behavior is
@@ -103,16 +102,10 @@ def _load_local_images(engine, raw) -> list[str] | None:
     if not raw:
         return None
     provider = getattr(engine, 'provider', None)
-    local = False
-    if isinstance(provider, SystemOneHTTPClient) and provider.supports_images:
-        try:
-            endpoint = urlsplit(provider.base_url)
-            local = (endpoint.scheme in {'http', 'https'}
-                     and endpoint.hostname in {'127.0.0.1', 'localhost', '::1'}
-                     and endpoint.username is None and endpoint.password is None
-                     and not endpoint.query and not endpoint.fragment)
-        except ValueError:
-            pass
+    endpoint = (_loopback_endpoint(provider.base_url)
+                if isinstance(provider, SystemOneHTTPClient) and provider.supports_images else None)
+    local = (endpoint is not None and endpoint.username is None and endpoint.password is None
+             and not endpoint.query and not endpoint.fragment)
     if not local:
         raise ValueError(
             "image_paths is LOCAL ONLY and requires a loopback SystemOne or D1 decision "
@@ -140,7 +133,8 @@ def _load_local_images(engine, raw) -> list[str] | None:
         descriptor = -1
         try:
             # Validate the opened handle too: lstat/open can race a replacement.
-            flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+            flags = (os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+                     | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
             descriptor = os.open(path, flags)
             opened = os.fstat(descriptor)
             if (not stat.S_ISREG(opened.st_mode)

@@ -1,11 +1,11 @@
-## Unreleased — local image decision tools
+## Unreleased
 
 - Added optional bounded local PNG/JPEG/WebP `image_paths` to `nerve_assess`,
   `nerve_decide`, and `nerve_rank` for loopback System One/D1 backends only.
 - Blocked proxy/redirect egress, raced file replacements, caller-overridden
   image receipt bindings, and backend error echoes of image bytes or paths.
-- Preserved text-only behavior and existing approval/enforcement authority;
-  this local change is not a claim of upstream release qualification.
+- Preserved existing approval/enforcement authority and remote HTTPS transport
+  behavior. Native local-file image input does not enable screenshot capture.
 
 ## 0.4.15 — October 25, 2026
 

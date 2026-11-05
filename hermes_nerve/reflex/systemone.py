@@ -12,6 +12,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
+from urllib.parse import SplitResult, urlsplit
 
 from ..client import scoped_timeout
 
@@ -36,11 +37,20 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def _local_opener() -> urllib.request.OpenerDirector:
-    # The System One/D1 endpoint is a loopback transport that may carry local
-    # image bytes. Environment proxies (http_proxy/https_proxy) and redirects
-    # would let a compromised or misconfigured local endpoint egress that data,
-    # so both are disabled here without asking the operator to relax anything.
+    # Local decision state must not leave through proxies or redirects.
+    # Remote HTTPS transports retain their existing urllib behavior.
     return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
+
+
+def _loopback_endpoint(url: str) -> SplitResult | None:
+    try:
+        endpoint = urlsplit(url)
+        if (endpoint.scheme in {'http', 'https'}
+                and endpoint.hostname in {'127.0.0.1', 'localhost', '::1'}):
+            return endpoint
+    except ValueError:
+        pass
+    return None
 
 
 _OPENER = _local_opener()
@@ -121,7 +131,8 @@ class SystemOneHTTPClient:
     def _urllib_transport(url: str, headers: dict[str, str], body: bytes, timeout: float):
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
-            with _OPENER.open(request, timeout=timeout) as response:
+            opener = _OPENER.open if _loopback_endpoint(url) is not None else urllib.request.urlopen
+            with opener(request, timeout=timeout) as response:
                 return (
                     int(response.status),
                     response.read(),

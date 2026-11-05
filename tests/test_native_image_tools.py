@@ -293,6 +293,23 @@ class NativeImageToolTests(unittest.TestCase):
                 self.assertIn('LOCAL ONLY', payload['error'])
                 read.assert_not_called()
 
+    def test_image_descriptor_requests_binary_mode_where_available(self) -> None:
+        self._use_provider(_capable_provider([]))
+        image = self.home / 'binary.png'
+        _write_image(image, PNG_SIG)
+        original_open = tools.os.open
+        binary_flag = 1 << 29
+        def open_file(path, flags, *args, **kwargs):
+            if Path(path) == image:
+                self.assertTrue(flags & binary_flag, 'image descriptor must use binary mode')
+            return original_open(path, flags & ~binary_flag, *args, **kwargs)
+        with patch.object(tools.os, 'O_BINARY', binary_flag, create=True), \
+                patch.object(tools.os, 'open', side_effect=open_file):
+            result = json.loads(tools.nerve_decide({
+                'state': '', 'instructions': 'Choose', 'choices': ['A', 'B'],
+                'image_paths': [str(image)]}))
+        self.assertTrue(result['ok'], result)
+
     def test_backend_error_cannot_echo_image_payload_into_tool_result(self) -> None:
         image = self.home / 'private-error.png'
         encoded = base64.b64encode(_write_image(image, PNG_SIG)).decode()

@@ -14,6 +14,7 @@ import threading
 import unittest
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import MagicMock, patch
 
 from hermes_nerve.reflex import systemone
 from hermes_nerve.reflex.systemone import SystemOneHTTPClient, SystemOneHTTPError
@@ -55,6 +56,21 @@ def _serve(handler) -> ThreadingHTTPServer:
 
 
 class SystemOneTransportHardeningTests(unittest.TestCase):
+    def test_remote_https_preserves_existing_transport_behavior(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.headers = {}
+        response.read.return_value = b'{"answers":{"q":{"type":"noul","noul":0.5}}}'
+        with patch.object(urllib.request, 'urlopen', return_value=response) as remote, \
+                patch.object(systemone._OPENER, 'open', return_value=response) as local:
+            client = SystemOneHTTPClient(base_url='https://example.invalid')
+            result = client.system_one(state='text only', questions={
+                'q': {'type': 'noul', 'instructions': 'Valid?'}})
+        self.assertEqual(result.answers['q']['noul'], 0.5)
+        remote.assert_called_once()
+        local.assert_not_called()
+
     def test_opener_disables_proxies_and_redirects(self) -> None:
         handlers = getattr(systemone._OPENER, "handlers", [])
         # ProxyHandler({}) registers no proxy_open methods, so no environment
@@ -89,15 +105,19 @@ class SystemOneTransportHardeningTests(unittest.TestCase):
     def test_environment_proxy_is_ignored_for_loopback(self) -> None:
         _OKHandler.hits = 0
         server = _serve(_OKHandler)
-        keys = ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY")
+        keys = ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY")
         old = {key: os.environ.get(key) for key in keys}
         try:
             os.environ["http_proxy"] = "http://127.0.0.1:1"
             os.environ["HTTP_PROXY"] = "http://127.0.0.1:1"
-            client = SystemOneHTTPClient(base_url=f"http://127.0.0.1:{server.server_address[1]}")
-            response = client.system_one(state="x", questions={"q": {"type": "noul", "instructions": "y?"}})
-            self.assertEqual(_OKHandler.hits, 1)
-            self.assertEqual(response.answers["q"]["noul"], 0.5)
+            os.environ["no_proxy"] = os.environ["NO_PROXY"] = ""
+            for path in ('/v1/systemone', '/v1/systemone?tenant=synthetic'):
+                with self.subTest(path=path):
+                    client = SystemOneHTTPClient(
+                        base_url=f"http://127.0.0.1:{server.server_address[1]}", path=path)
+                    response = client.system_one(state="x", questions={"q": {"type": "noul", "instructions": "y?"}})
+                    self.assertEqual(response.answers["q"]["noul"], 0.5)
+            self.assertEqual(_OKHandler.hits, 2)
         finally:
             for key, value in old.items():
                 if value is None:
