@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import math
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from .client import JevClient, JevError
 from .privacy import canonical_hash, redact
@@ -12,8 +12,30 @@ from .receipts import write_receipt
 from .provenance import execution_provenance, result_provenance
 
 
+class DecisionResponse(Protocol):
+    @property
+    def model(self) -> str: ...
+    @property
+    def answers(self) -> dict[str, dict[str, Any]]: ...
+    @property
+    def usage(self) -> dict[str, Any]: ...
+    @property
+    def latency_ms(self) -> float: ...
+    @property
+    def request_id(self) -> str: ...
+    @property
+    def provider(self) -> str: ...
+
+
 class DecisionProvider(Protocol):
-    def system_one(self, *, state: Any, questions: dict[str, dict[str, Any]], model: str | None = None): ...
+    def system_one(self, *, state: Any, questions: dict[str, dict[str, Any]],
+                   model: str | None = None) -> DecisionResponse: ...
+
+
+class ImageDecisionProvider(DecisionProvider, Protocol):
+    def system_one(self, *, state: Any, questions: dict[str, dict[str, Any]],
+                   model: str | None = None,
+                   images: list[str] | tuple[str, ...] | None = None) -> DecisionResponse: ...
 
 
 def _normalize_image_state(state: Any, images: Any) -> Any:
@@ -37,10 +59,8 @@ def _image_receipt_state(state: Any, images: Any) -> Any:
     if not images:
         return state
     digests = [canonical_hash(str(image)) for image in images]
-    if isinstance(state, dict):
-        bound = dict(state)
-        bound.setdefault("image_sha256", digests)
-        return bound
+    # Keep provider-visible state intact, including any caller-owned hash keys.
+    # A separate envelope prevents that state from overriding evidence binding.
     return {"state": state, "image_sha256": digests}
 
 
@@ -112,12 +132,18 @@ class DecisionEngine:
         if images:
             if not bool(getattr(self.provider, "supports_images", False)):
                 raise ValueError("configured decision provider does not support image input")
-            return self.provider.system_one(
-                state=state,
-                questions=questions,
-                model=model,
-                images=list(images),
-            )
+            image_provider = cast(ImageDecisionProvider, self.provider)
+            try:
+                return image_provider.system_one(
+                    state=state,
+                    questions=questions,
+                    model=model,
+                    images=list(images),
+                )
+            except Exception:
+                # Local error bodies can echo encoded image input. Do not send
+                # those bytes back into the primary model's tool context.
+                raise JevError('Image decision failed; inspect the local backend logs') from None
         return self.provider.system_one(state=state, questions=questions, model=model)
 
     @staticmethod

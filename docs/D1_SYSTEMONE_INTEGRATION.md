@@ -64,6 +64,50 @@ engine.decide(
 
 This enables independent visual supervision of browser/computer-use flows, rendered CAD, confirmation dialogs, and other UI state while retaining the same typed decision and authority boundary.
 
+### Native tools: local image files
+
+`nerve_assess`, `nerve_decide`, and `nerve_rank` accept optional `image_paths`.
+They require an image-capable **loopback System One/D1** backend; hosted and
+shadow backends are refused before files are read. Use `reflex_backend: d1`
+for this local-file path, not the hosted-primary shadow configuration above.
+
+```json
+{
+  "state": "",
+  "image_paths": ["/path/to/screenshot.png"],
+  "questions": {
+    "dialog": {
+      "type": "choice",
+      "instructions": "Which dialog is visible?",
+      "criteria": {"save": "Save confirmation", "delete": "Delete confirmation"}
+    }
+  }
+}
+```
+
+Supply this object to `nerve_assess`. Image-only `null` state is normalized to
+an empty string for runtimes that reject null. This does not enable automatic
+screenshot capture or approval of the depicted action.
+
+- Up to four PNG/JPEG/WebP files, at most 6,000,000 bytes per file, with encoded
+  limits of 8,000,000 characters per image and 16,000,000 total.
+- Header signatures are checked; image decoding remains the model runtime's
+  responsibility. Remote image URLs, symlinks, non-regular files and raced file
+  replacements are refused. The combined text/image/question token budget
+  must still fit the runtime's configured batch/window.
+- Images are inlined locally, without environment proxies or redirects. Raw
+  bytes and paths are not added to Nerve receipts or provider-error tool results.
+  Image hashes are bound into a separate receipt-state envelope so caller state
+  cannot override the binding. Normal text-only receipt hashing is unchanged.
+- `nerve_verify` retains its existing native schema. No enforcement, approval,
+  or automatic screenshot policy is changed by adding image input.
+
+Select the actual loaded model identifier rather than assuming the preset
+default. For example, LM Studio can index `LiquidAI/d1-2B-GGUF` as `d1-2b`.
+The d1-2B GGUF runtime supports text/JSON, images and noul/choice/score, but
+not all features advertised for the Transformers checkpoint (video, extraction,
+multiple-choice selection, or boxes). Check the model/runtime documentation.
+
 ## Smoke check
 
 ```bash

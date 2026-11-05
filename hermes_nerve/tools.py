@@ -7,9 +7,11 @@ import json
 import os
 import stat
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .context import curate_context
 from .engine import DecisionEngine
+from .reflex.systemone import SystemOneHTTPClient
 from . import assistant, experience, gate, ledger, lifecycle, receipts, nervous, selective_context
 from .provenance import execution_provenance, result_provenance, runtime_identity
 
@@ -100,7 +102,18 @@ def _load_local_images(engine, raw) -> list[str] | None:
         raise ValueError("image_paths must be an array of local file paths")
     if not raw:
         return None
-    if not bool(getattr(getattr(engine, "provider", None), "supports_images", False)):
+    provider = getattr(engine, 'provider', None)
+    local = False
+    if isinstance(provider, SystemOneHTTPClient) and provider.supports_images:
+        try:
+            endpoint = urlsplit(provider.base_url)
+            local = (endpoint.scheme in {'http', 'https'}
+                     and endpoint.hostname in {'127.0.0.1', 'localhost', '::1'}
+                     and endpoint.username is None and endpoint.password is None
+                     and not endpoint.query and not endpoint.fragment)
+        except ValueError:
+            pass
+    if not local:
         raise ValueError(
             "image_paths is LOCAL ONLY and requires a loopback SystemOne or D1 decision "
             "backend; hosted providers and shadow fallback do not support local image input"
@@ -124,11 +137,23 @@ def _load_local_images(engine, raw) -> list[str] | None:
             raise ValueError(
                 f"image_paths[{index}] exceeds the {_MAX_IMAGE_BYTES} byte local image limit"
             )
+        descriptor = -1
         try:
-            with open(path, "rb") as handle:
+            # Validate the opened handle too: lstat/open can race a replacement.
+            flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+            descriptor = os.open(path, flags)
+            opened = os.fstat(descriptor)
+            if (not stat.S_ISREG(opened.st_mode)
+                    or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
+                raise ValueError(f'image_paths[{index}] must remain a regular local file')
+            with os.fdopen(descriptor, 'rb') as handle:
+                descriptor = -1  # The file object owns it now.
                 data = handle.read(_MAX_IMAGE_BYTES + 1)
         except OSError:
             raise ValueError(f"image_paths[{index}] could not be read as a local file")
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
         if len(data) > _MAX_IMAGE_BYTES:
             raise ValueError(
                 f"image_paths[{index}] exceeds the {_MAX_IMAGE_BYTES} byte local image limit"

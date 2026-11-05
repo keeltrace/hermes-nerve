@@ -13,12 +13,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from hermes_nerve import privacy, receipts, schemas, tools
 from hermes_nerve.engine import DecisionEngine
 from hermes_nerve.jsonl import read_jsonl
 from hermes_nerve.reflex.shadow import ShadowProvider
-from hermes_nerve.reflex.systemone import D1Client
+from hermes_nerve.reflex.systemone import D1Client, SystemOneHTTPError
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 JPEG_SIG = b"\xff\xd8\xff\xe0"
@@ -279,6 +280,47 @@ class NativeImageToolTests(unittest.TestCase):
 
     # -- malformed / oversized / too many ---------------------------------
 
+    def test_remote_systemone_refused_before_filesystem_access(self) -> None:
+        for url in ('https://example.invalid', 'http://127.0.0.1.example.invalid'):
+            with self.subTest(url=url):
+                provider = D1Client(base_url=url, transport=lambda *args: self.fail('must not contact provider'))
+                self._use_provider(provider)
+                with patch.object(tools.os, 'lstat', side_effect=AssertionError('filesystem accessed')) as read:
+                    payload = json.loads(tools.nerve_decide({
+                        'state': '', 'instructions': 'Choose', 'choices': ['A', 'B'],
+                        'image_paths': ['private-image.png']}))
+                self.assertFalse(payload['ok'])
+                self.assertIn('LOCAL ONLY', payload['error'])
+                read.assert_not_called()
+
+    def test_backend_error_cannot_echo_image_payload_into_tool_result(self) -> None:
+        image = self.home / 'private-error.png'
+        encoded = base64.b64encode(_write_image(image, PNG_SIG)).decode()
+        def transport(*args):
+            raise SystemOneHTTPError(f'backend echoed {image} data:image/png;base64,{encoded}')
+        self._use_provider(D1Client(transport=transport))
+        result = json.loads(tools.nerve_decide({
+            'state': '', 'instructions': 'Choose', 'choices': ['A', 'B'],
+            'image_paths': [str(image)]}))
+        self.assertFalse(result['ok'])
+        self.assertNotIn(str(image), result['error'])
+        self.assertNotIn(encoded, result['error'])
+
+    def test_replaced_path_cannot_follow_a_symlink(self) -> None:
+        self._use_provider(_capable_provider([]))
+        image = self.home / 'original.png'
+        target = self.home / 'target.png'
+        _write_image(image, PNG_SIG)
+        _write_image(target, PNG_SIG)
+        original = image.lstat()
+        image.unlink()
+        image.symlink_to(target)
+        with patch.object(tools.os, 'lstat', return_value=original):
+            payload = json.loads(tools.nerve_decide({
+                'state': '', 'instructions': 'Choose', 'choices': ['A', 'B'],
+                'image_paths': [str(image)]}))
+        self.assertFalse(payload['ok'])
+
     def test_rejects_non_regular_file(self) -> None:
         self._use_provider(_capable_provider([]))
         payload = json.loads(
@@ -371,11 +413,13 @@ class NativeImageToolTests(unittest.TestCase):
         text = json.dumps(record)
         self.assertNotIn(str(image), text)
         self.assertNotIn(base64.b64encode(raw).decode(), text)
-        self.assertEqual(record["state_sha256"], record["state_sha256"])
         state = record.get("state")
         self.assertIsInstance(state, dict)
         self.assertEqual(len(state["image_sha256"]), 1)
-        self.assertEqual(state["note"], "visible")
+        self.assertEqual(state["state"]["note"], "visible")
+        self.assertEqual(record['state_sha256'], privacy.canonical_hash({
+            'state': {'note': 'visible'},
+            'image_sha256': [privacy.canonical_hash(captured[0]['images'][0])]}))
 
     def test_different_image_content_changes_state_hash(self) -> None:
         captured: list = []
@@ -395,6 +439,20 @@ class NativeImageToolTests(unittest.TestCase):
         self.assertNotEqual(first, second)
         # Neither matches the text-only binding for the same state.
         self.assertNotEqual(first, privacy.canonical_hash({"x": 1}))
+
+    def test_caller_cannot_override_receipt_image_binding(self) -> None:
+        self._use_provider(_capable_provider([]))
+        image = self.home / 'binding.png'
+        hashes = []
+        for size in (64, 96):
+            _write_image(image, PNG_SIG, total=size)
+            result = json.loads(tools.nerve_decide({
+                'state': {'image_sha256': ['caller-controlled']},
+                'instructions': 'Choose', 'choices': ['A', 'B'],
+                'image_paths': [str(image)]}))
+            self.assertTrue(result['ok'], result)
+            hashes.append(self._records()[-1]['state_sha256'])
+        self.assertNotEqual(*hashes)
 
 
 if __name__ == "__main__":

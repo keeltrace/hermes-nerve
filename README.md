@@ -85,7 +85,7 @@ Legacy remains the 16-tool compatibility surface; Lean and Marie Kondo gain no n
 
 ## Development — generic System One + Liquid D1
 
-The post-0.3.2.1 development line adds a dependency-free generic TypeSafe-compatible /v1/systemone HTTP provider and a LiquidAI/d1-3B preset. D1 can run as an opt-in primary or, preferably first, as a fail-open shadow behind authoritative Jev. The same provider seam supports image data URLs through optional DecisionEngine images input. Hermes retains final stop/continue and canonical Kanban authority. See docs/D1_SYSTEMONE_INTEGRATION.md.
+The post-0.3.2.1 development line adds a dependency-free generic TypeSafe-compatible /v1/systemone HTTP provider and a LiquidAI/d1-3B preset. D1 can run as an opt-in primary or, preferably first, as a fail-open shadow behind authoritative Jev. The provider seam supports image data URLs through optional DecisionEngine images input. Native `nerve_assess`, `nerve_decide`, and `nerve_rank` also accept bounded `image_paths` for loopback System One/D1 only (not hosted/shadow backends). Hermes retains final stop/continue and canonical Kanban authority. See [D1/System One integration](docs/D1_SYSTEMONE_INTEGRATION.md) for limits and an example.
 
 ## Dev17 — open backend release matrix
 
