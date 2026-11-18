@@ -300,10 +300,16 @@ def test_park_helper_is_a_noop_without_a_run_identity(run, board):
 @pytest.mark.parametrize(
     "title, body, gated, classes",
     [
-        ("pay the March vendor invoice", "", True, ("money", "vendor")),
+        ("Approve the March vendor invoice", "", True, ("money", "vendor")),
         ("Refactor the parser", "fix a null deref", False, ()),
-        ("", "Choose pricing tier for launch", True, ("money",)),
+        ("Choose pricing tier for launch", "", True, ("money", "product_direction")),
         ("Decide the Q1 ROADMAP", "", True, ("product_direction",)),
+        # Regression guards for the body-wide keyword match that gated 67.6% of
+        # the live board ("nda" inside "standard"/"candidate", "signatur" inside
+        # "signature", "vendor"/"pricing" in ordinary engineering prose).
+        ("Fix is_christian mislabeling", "vendor contract signature standard nda", False, ()),
+        ("Decide: standardise the command runner", "", False, ()),
+        ("Refactor billing code path", "invoice chargeback refund", False, ()),
     ],
 )
 def test_classify_human_gated_table(title, body, gated, classes):
@@ -315,11 +321,11 @@ def test_classify_human_gated_table(title, body, gated, classes):
 
 
 def test_classify_human_gated_reports_the_literal_needles_and_is_deterministic():
-    first = autobind.classify_human_gated(title="pay the March vendor invoice", body="")
+    first = autobind.classify_human_gated(title="Approve the March vendor invoice", body="")
     assert first.matched == ("invoice", "vendor")
-    assert first == autobind.classify_human_gated(title="pay the March vendor invoice", body="")
+    assert first == autobind.classify_human_gated(title="Approve the March vendor invoice", body="")
     assert autobind.classify_human_gated() == autobind.HumanGate(gated=False, classes=(), matched=())
-    assert "money" in autobind.classify_human_gated(body="Choose pricing tier for launch").classes
+    assert "money" in autobind.classify_human_gated(title="Choose pricing tier for launch").classes
 
 
 # --------------------------- 11-12: build_criteria tagging ---------------------------
@@ -402,7 +408,7 @@ def _diagnostics(sup, kind: str) -> int:
 
 
 def test_ensure_binding_parks_a_human_gated_card_without_binding(binding, board):
-    binding.use(_task("Pay the March vendor invoice", DOD_BODY))
+    binding.use(_task("Approve the March vendor invoice", DOD_BODY))
     assert autobind.ensure_kanban_binding(binding.sup, session_id="s") is None
     assert binding.binds == []
     assert binding.sup.active_contract("t_gate") is None
@@ -420,7 +426,7 @@ def test_ensure_binding_parks_a_human_gated_card_without_binding(binding, board)
 
 def test_ensure_binding_returns_none_for_a_gated_card_even_when_the_park_fails(binding, monkeypatch):
     fake = _install(monkeypatch, FakeBoard(raises=RuntimeError("board locked")))
-    binding.use(_task("Pay the March vendor invoice", DOD_BODY))
+    binding.use(_task("Approve the March vendor invoice", DOD_BODY))
     assert autobind.ensure_kanban_binding(binding.sup, session_id="s") is None
     assert len(fake.calls) == 1
     assert binding.binds == []
