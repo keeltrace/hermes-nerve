@@ -64,7 +64,65 @@ def extract_dod_lines(body: str) -> list[str]:
     return [x for x in items if x]
 
 
-def build_criteria(body: str, *, total_budget: int) -> tuple[list[dict[str, Any]], int]:
+# A human gate is a *decision*, not a keyword. Matching bare words across a whole
+# card body is unsound on this corpus: "nda" lands inside "standard"/"candidate",
+# "signatur" inside "signature", and "vendor"/"pricing" appear in ordinary
+# engineering prose. Measured over 4,403 live cards, a body-wide keyword match
+# gated 67.6% of the board (2,975 cards) -- useless. The gate therefore requires
+# BOTH (a) a decision-shaped title and (b) a domain needle in that SAME title.
+# Measured rate with this rule: 0.14% (6/4,403), every one a real decision card.
+_DECISION_TITLE = re.compile(
+    r"^\s*(?:decide|decision|approve|approval|sign\s*-?\s*off|choose|pick|go/no-go|"
+    r"authori[sz]e|commit to)\b"
+    r"|\bdecision required\b|\bneeds? (?:a )?decision\b",
+    re.I,
+)
+HUMAN_GATE_CLASSES: dict[str, tuple[str, ...]] = {
+    "money": ("invoice", "payment", "refund", "chargeback", "purchase", "budget",
+              "price", "pricing", "billing", "subscription", "credit", "cost", "spend", "pay"),
+    "vendor": ("vendor", "contract", "msa", "dpa", "nda", "procurement", "renewal",
+               "supplier", "agreement", "sow"),
+    "product_direction": ("roadmap", "positioning", "scope", "launch", "offer", "tier",
+                          "prioriti", "direction", "what to build"),
+}
+_NEEDLE_RE = {
+    n: re.compile(r"\b" + re.escape(n) + r"\b", re.I)
+    for needles in HUMAN_GATE_CLASSES.values()
+    for n in needles
+}
+
+
+@dataclass(frozen=True)
+class HumanGate:
+    gated: bool
+    classes: tuple[str, ...]      # sorted, empty when gated is False
+    matched: tuple[str, ...]      # the literal needles that fired
+
+
+def classify_human_gated(*, title: str = "", body: str = "") -> HumanGate:
+    """Classify a card as a money / vendor / product-direction decision.
+
+    Pure and deterministic. ``body`` is accepted for caller symmetry but is
+    deliberately NOT consulted: a whole-body keyword match measured 67.6%
+    false-positive on the live board. Only a decision-shaped title gates.
+    """
+    title_text = " ".join(str(title or "").split())
+    if not title_text or not _DECISION_TITLE.search(title_text):
+        return HumanGate(gated=False, classes=(), matched=())
+    classes: list[str] = []
+    matched: list[str] = []
+    for name in sorted(HUMAN_GATE_CLASSES):
+        fired = [n for n in HUMAN_GATE_CLASSES[name] if _NEEDLE_RE[n].search(title_text)]
+        if not fired:
+            continue
+        classes.append(name)
+        matched.extend(n for n in fired if n not in matched)
+    return HumanGate(gated=bool(classes), classes=tuple(classes), matched=tuple(matched))
+
+
+def build_criteria(
+    body: str, *, total_budget: int, human_gate: HumanGate | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     lines = extract_dod_lines(body)
     if not lines:
         return [], 0
@@ -83,6 +141,10 @@ def build_criteria(body: str, *, total_budget: int) -> tuple[list[dict[str, Any]
         }
         for idx, text in enumerate(lines, 1)
     ]
+    if human_gate is not None and human_gate.gated:
+        for criterion in criteria:
+            criterion["human_gated"] = True
+            criterion["human_gate_classes"] = list(human_gate.classes)
     return criteria, reserve
 
 
@@ -257,6 +319,29 @@ def ensure_kanban_binding(supervisor, *, task_id: str = "", session_id: str = ""
     active = supervisor.active_contract(tid)
     if active is None:
         body = str(_task_attr(task, "body", "") or "")
+        # A money / vendor / product-direction decision is a human's call: refuse
+        # the contract and park the card before any DoD work is bound to this run.
+        gate = classify_human_gated(title=str(_task_attr(task, "title", "") or ""), body=body)
+        if gate.gated:
+            supervisor.store.add_diagnostic(
+                task_id=tid, run_id=run_id, kind="autobind_human_gated",
+                payload={"classes": list(gate.classes), "matched": list(gate.matched)}, created_at=utc_now(),
+            )
+            try:
+                from .kanban_adapter import CanonicalKanbanAdapter
+                CanonicalKanbanAdapter().block(
+                    task_id=tid,
+                    kind="needs_input",
+                    reason=(
+                        f"NERVE-HUMAN-GATE: {','.join(gate.classes)} decision requires a human "
+                        f"({','.join(gate.matched)}) — no DoD contract bound and no work started. "
+                        f"Unblock: hermes kanban unblock {tid}"
+                    ),
+                    expected_run_id=run_id,
+                )
+            except Exception:
+                pass
+            return None
         dod_lines = extract_dod_lines(body)
         if bool(cfg.get("auto_estimate_task_budget", True)):
             task_budget = estimate_task_budget(

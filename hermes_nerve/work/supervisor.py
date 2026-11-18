@@ -533,6 +533,11 @@ class CardSupervisor:
             decision_id="reflexcomplete-" + uuid.uuid4().hex,
         )
 
+    @staticmethod
+    def escalation_park_reason(verdict: Any, task_id: str) -> str:
+        """Instance-reachable alias of the module-level policy (hooks hold ``sup``)."""
+        return escalation_park_reason(verdict, task_id)
+
     # --------------------------- budget / trajectory ---------------------------
     def record_usage(self, identity: RunIdentity, *, consumed_tokens: int, source: str) -> dict[str, Any]:
         contract = self._contract_for_identity(identity)
@@ -784,6 +789,35 @@ class CardSupervisor:
             total_tokens=parts["accounted_tokens"],
             created_at=utc_now(),
         )
+
+
+_PARK_NAMED_CRITERIA = 3
+_PARK_CRITERION_CHARS = 60
+
+
+def escalation_park_reason(verdict: Any, task_id: str) -> str:
+    """One-line park reason for an ESCALATE verdict with unmet criteria.
+
+    Pure policy: no store, no board. An ESCALATE verdict means a human or
+    external judgment is required, so another run can only reach the same
+    verdict. Returns ``""`` when there is nothing unmet -- the caller must not
+    park on an empty reason.
+    """
+    raw = getattr(verdict, "missing_criteria", None) or ()
+    if isinstance(raw, str):
+        raw = (raw,)
+    # Collapse whitespace so a multi-line criterion can never break the one-line contract.
+    missing = [text for text in (" ".join(str(item).split()) for item in raw) if text]
+    if not missing:
+        return ""
+    named = [text[:_PARK_CRITERION_CHARS] for text in missing[:_PARK_NAMED_CRITERIA]]
+    if len(missing) > _PARK_NAMED_CRITERIA:
+        named.append("…")
+    tid = " ".join(str(task_id or "").split())
+    return (
+        f"NERVE-ESCALATE-PARK: completion escalated with {len(missing)} unmet criteria ({', '.join(named)}) "
+        f"— no further run until a human resolves them. Unblock: hermes kanban unblock {tid}"
+    )
 
 
 def normalize_mode(mode: str) -> str:

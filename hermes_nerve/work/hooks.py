@@ -1,3 +1,10 @@
+"""Hermes lifecycle hooks for supervised Kanban work.
+
+ESCALATE parking is split across two modules on purpose. The board write
+(``_park_escalated_card``) lives here because ``hooks.py`` owns hook-side board
+authority; the reason policy (``supervisor.escalation_park_reason``) lives in
+``supervisor.py`` so it stays pure and unit-testable without a board.
+"""
 from __future__ import annotations
 
 import json
@@ -326,6 +333,35 @@ def _complete_verified_run(sup, identity, proposal: dict[str, Any], verdict, *, 
     except Exception:
         pass
     return False, last
+
+
+def _park_escalated_card(sup, identity, verdict) -> str | None:
+    """Park the card for an ESCALATE verdict with unmet criteria. Returns a note for the message.
+
+    Blocking the tool call alone leaves the card ``running``: the worker exits,
+    the dispatcher re-dispatches, and the next session pays to reach the same
+    verdict. Any other verdict (RETRY / REPLAN / AMEND / ...) is a no-op here.
+    A failed or refused park only changes the note, never the tool-call verdict.
+    """
+    try:
+        if getattr(verdict, "allow", True):
+            return None
+        if str(getattr(verdict, "value", "")).upper() != "ESCALATE":
+            return None
+        if not getattr(verdict, "missing_criteria", None):
+            return None
+        if not identity or getattr(identity, "run_id", None) is None:
+            return None
+        reason = sup.escalation_park_reason(verdict, identity.task_id)
+        if not reason:
+            return None
+        from .kanban_adapter import CanonicalKanbanAdapter
+        ok, detail = CanonicalKanbanAdapter().block(
+            task_id=identity.task_id, kind="needs_input", reason=reason, expected_run_id=identity.run_id,
+        )
+    except Exception as exc:
+        return f" (park failed: {type(exc).__name__}: {str(exc)[:300]})"
+    return " Parked needs_input." if ok else f" (park refused: {detail})"
 
 
 def _owns_kanban_terminal_authority() -> bool:
@@ -685,9 +721,10 @@ def pre_tool_call(tool_name: str, args: dict, task_id: str | None = None, sessio
                     "rule_key": "jev:work-terminal-ready-error",
                 }
             return None
+        park_note = _park_escalated_card(sup, identity, verdict) or ""
         return {
             "action": "block",
-            "message": verdict.reason + (f" Missing: {', '.join(verdict.missing_criteria)}" if verdict.missing_criteria else ""),
+            "message": verdict.reason + (f" Missing: {', '.join(verdict.missing_criteria)}" if verdict.missing_criteria else "") + park_note,
             "rule_key": "jev:work-completion",
         }
 
@@ -1110,9 +1147,10 @@ def pre_verify(*, task_id: str = "", session_id: str = "", **kwargs: Any):
             "rule_key": _TERMINAL_READY_RULE,
         }
     missing = f" Missing: {', '.join(verdict.missing_criteria)}" if verdict.missing_criteria else ""
+    park_note = _park_escalated_card(sup, identity, verdict) or ""
     return {
         "action": "continue",
-        "message": f"Nerve completion gate: {verdict.reason}{missing}",
+        "message": f"Nerve completion gate: {verdict.reason}{missing}{park_note}",
     }
 
 def post_llm_call(*, task_id: str = "", session_id: str = "", **kwargs: Any) -> None:
