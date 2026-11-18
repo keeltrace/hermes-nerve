@@ -298,6 +298,29 @@ def ensure_kanban_binding(supervisor, *, task_id: str = "", session_id: str = ""
     active = supervisor.active_contract(tid)
     if active is None:
         body = str(_task_attr(task, "body", "") or "")
+        # A money / vendor / product-direction decision is a human's call: refuse
+        # the contract and park the card before any DoD work is bound to this run.
+        gate = classify_human_gated(title=str(_task_attr(task, "title", "") or ""), body=body)
+        if gate.gated:
+            supervisor.store.add_diagnostic(
+                task_id=tid, run_id=run_id, kind="autobind_human_gated",
+                payload={"classes": list(gate.classes), "matched": list(gate.matched)}, created_at=utc_now(),
+            )
+            try:
+                from .kanban_adapter import CanonicalKanbanAdapter
+                CanonicalKanbanAdapter().block(
+                    task_id=tid,
+                    kind="needs_input",
+                    reason=(
+                        f"NERVE-HUMAN-GATE: {','.join(gate.classes)} decision requires a human "
+                        f"({','.join(gate.matched)}) — no DoD contract bound and no work started. "
+                        f"Unblock: hermes kanban unblock {tid}"
+                    ),
+                    expected_run_id=run_id,
+                )
+            except Exception:
+                pass
+            return None
         dod_lines = extract_dod_lines(body)
         if bool(cfg.get("auto_estimate_task_budget", True)):
             task_budget = estimate_task_budget(

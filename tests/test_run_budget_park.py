@@ -401,6 +401,32 @@ def _diagnostics(sup, kind: str) -> int:
         return con.execute("SELECT count(*) FROM supervision_diagnostics WHERE kind=?", (kind,)).fetchone()[0]
 
 
+def test_ensure_binding_parks_a_human_gated_card_without_binding(binding, board):
+    binding.use(_task("Pay the March vendor invoice", DOD_BODY))
+    assert autobind.ensure_kanban_binding(binding.sup, session_id="s") is None
+    assert binding.binds == []
+    assert binding.sup.active_contract("t_gate") is None
+    assert len(board.calls) == 1
+    task_id, kwargs = board.calls[0]
+    assert task_id == "t_gate"
+    assert kwargs["kind"] == "needs_input"
+    assert kwargs["expected_run_id"] == 42
+    assert kwargs["reason"] == (
+        "NERVE-HUMAN-GATE: money,vendor decision requires a human (invoice,vendor) "
+        "— no DoD contract bound and no work started. Unblock: hermes kanban unblock t_gate"
+    )
+    assert _diagnostics(binding.sup, "autobind_human_gated") == 1
+
+
+def test_ensure_binding_returns_none_for_a_gated_card_even_when_the_park_fails(binding, monkeypatch):
+    fake = _install(monkeypatch, FakeBoard(raises=RuntimeError("board locked")))
+    binding.use(_task("Pay the March vendor invoice", DOD_BODY))
+    assert autobind.ensure_kanban_binding(binding.sup, session_id="s") is None
+    assert len(fake.calls) == 1
+    assert binding.binds == []
+    assert _diagnostics(binding.sup, "autobind_human_gated") == 1
+
+
 def test_ensure_binding_is_unchanged_for_an_ungated_card(binding, board):
     binding.use(_task("Refactor the parser", DOD_BODY))
     ident = autobind.ensure_kanban_binding(binding.sup, session_id="s")
