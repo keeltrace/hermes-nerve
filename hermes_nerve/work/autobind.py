@@ -64,7 +64,44 @@ def extract_dod_lines(body: str) -> list[str]:
     return [x for x in items if x]
 
 
-def build_criteria(body: str, *, total_budget: int) -> tuple[list[dict[str, Any]], int]:
+HUMAN_GATE_CLASSES: dict[str, tuple[str, ...]] = {
+    "money": ("invoice", "refund", "charge", "price", "pricing", "budget", "stripe",
+              "credit", "payment", "billing", "spend", "cost approval"),
+    "vendor": ("vendor", "contract", "msa", "dpa", "procurement", "signatur", "renewal",
+               "third-party agreement", "nda"),
+    "product_direction": ("positioning", "roadmap", "scope decision", "product direction",
+                          "launch decision", "tier change", "what to build", "prioriti"),
+}
+
+
+@dataclass(frozen=True)
+class HumanGate:
+    gated: bool
+    classes: tuple[str, ...]      # sorted, empty when gated is False
+    matched: tuple[str, ...]      # the literal needles that fired
+
+
+def classify_human_gated(*, title: str = "", body: str = "") -> HumanGate:
+    """Classify a card as a money / vendor / product-direction decision.
+
+    Pure and deterministic: a case-insensitive substring match of the
+    ``HUMAN_GATE_CLASSES`` needles against ``title + "\\n" + body``.
+    """
+    haystack = (str(title or "") + "\n" + str(body or "")).lower()
+    classes: list[str] = []
+    matched: list[str] = []
+    for name in sorted(HUMAN_GATE_CLASSES):
+        fired = [needle for needle in HUMAN_GATE_CLASSES[name] if needle in haystack]
+        if not fired:
+            continue
+        classes.append(name)
+        matched.extend(needle for needle in fired if needle not in matched)
+    return HumanGate(gated=bool(classes), classes=tuple(classes), matched=tuple(matched))
+
+
+def build_criteria(
+    body: str, *, total_budget: int, human_gate: HumanGate | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     lines = extract_dod_lines(body)
     if not lines:
         return [], 0
@@ -83,6 +120,10 @@ def build_criteria(body: str, *, total_budget: int) -> tuple[list[dict[str, Any]
         }
         for idx, text in enumerate(lines, 1)
     ]
+    if human_gate is not None and human_gate.gated:
+        for criterion in criteria:
+            criterion["human_gated"] = True
+            criterion["human_gate_classes"] = list(human_gate.classes)
     return criteria, reserve
 
 

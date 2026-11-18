@@ -58,6 +58,27 @@ class CanonicalKanbanAdapter:
             return bool(result[0]), result[1]
         return bool(result), None if result else "canonical review transition failed"
 
+    def block(
+        self,
+        *,
+        task_id: str,
+        kind: str,
+        reason: str,
+        expected_run_id: int | None = None,
+    ) -> tuple[bool, str | None]:
+        kb = self._module()
+        with self._connection(kb) as conn:
+            result = kb.block_task(
+                conn,
+                task_id,
+                kind=kind,
+                reason=reason,
+                expected_run_id=int(expected_run_id) if expected_run_id is not None else None,
+            )
+        if isinstance(result, tuple):
+            return bool(result[0]), result[1]
+        return bool(result), None if result else "canonical block transition refused"
+
     def complete(
         self,
         *,
