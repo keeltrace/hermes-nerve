@@ -38,16 +38,20 @@ from .privacy import canonical_hash, redact
 from .policy_memory import PolicyMemory, tool_wide_policy_reason
 from .provenance import execution_provenance
 from .progress_integrity import (
+    board_mutation_kind,
     change_required as progress_change_required,
     changed_paths_relevant,
+    compose_requested_paths as progress_compose_requested_paths,
+    composition_diagnostic as progress_composition_diagnostic,
+    current_profile_name,
     environment_action,
     environment_failure,
     mutation_is_relevant,
-    requested_paths as progress_requested_paths,
     test_succeeded,
     test_result_masked,
     tool_kind,
     verification_required as progress_verification_required,
+    verify_board_mutation,
 )
 from .router import (
     assess_event,
@@ -260,6 +264,11 @@ class TurnState:
     change_required: bool = False
     verification_required: bool = False
     requested_paths: tuple[str, ...] = ()
+    requested_path_sources: tuple[dict[str, Any], ...] = ()
+    composition_diagnostic: tuple[dict[str, Any], ...] = ()
+    composition_diagnostic_issued: bool = False
+    started_wall: float = field(default_factory=time.time)
+    board_mutations_credited: int = 0
     tool_actions: int = 0
     mutation_attempts: int = 0
     relevant_mutation_attempts: int = 0
@@ -442,6 +451,12 @@ class NervousSystem:
             return turn_id or ""
         self._ensure_worker()
         tid = str(turn_id or uuid.uuid4().hex)
+        change_required = progress_change_required(user_message)
+        composition = progress_compose_requested_paths(user_message)
+        diagnostic = (
+            progress_composition_diagnostic(user_message)
+            if change_required and not composition.paths else ()
+        )
         with self._lock:
             state = TurnState(
                 turn_id=tid,
@@ -449,9 +464,11 @@ class NervousSystem:
                 user_message_hash=canonical_hash(user_message),
                 recent_events=deque(maxlen=self._config.retain_recent_events),
                 pending_batch=deque(maxlen=self._config.retain_recent_events),
-                change_required=progress_change_required(user_message),
+                change_required=change_required,
                 verification_required=progress_verification_required(user_message),
-                requested_paths=progress_requested_paths(user_message),
+                requested_paths=composition.paths,
+                requested_path_sources=composition.sources,
+                composition_diagnostic=diagnostic,
             )
             self._turns[tid] = state
             if session_id:
@@ -734,6 +751,8 @@ class NervousSystem:
             "mutation_attempts": state.mutation_attempts,
             "relevant_mutation_attempts": state.relevant_mutation_attempts,
             "requested_paths": list(state.requested_paths),
+            "token_source": list(state.requested_path_sources),
+            "board_mutations_credited": state.board_mutations_credited,
             "decision_id": decision_id,
         })
 
@@ -1005,7 +1024,31 @@ class NervousSystem:
             with self._lock:
                 state.tool_actions += 1
                 kind = tool_kind(tool_name, args)
-                if kind == "mutation":
+                board_kind = board_mutation_kind(tool_name)
+                if board_kind:
+                    # Orchestrator turns write cards, not files: credit a board
+                    # write only after reading the row back and binding it to
+                    # this profile inside this turn's window (t_ac8ba462).
+                    credit = verify_board_mutation(
+                        board_kind,
+                        args,
+                        result,
+                        profile=current_profile_name(),
+                        current_task=str(os.getenv("HERMES_KANBAN_TASK", "")).strip(),
+                        started_wall=state.started_wall,
+                    )
+                    if credit is not None:
+                        state.mutation_attempts += 1
+                        state.relevant_mutation_attempts += 1
+                        state.board_mutations_credited += 1
+                        self._log("board_mutation_credited", {
+                            "turn_id": state.turn_id,
+                            "session_id": state.session_id,
+                            "tool_name": tool_name,
+                            "requested_paths": list(state.requested_paths),
+                            **credit,
+                        })
+                elif kind == "mutation":
                     state.mutation_attempts += 1
                     if mutation_is_relevant(tool_name, args, state.requested_paths):
                         state.relevant_mutation_attempts += 1
@@ -1178,7 +1221,11 @@ class NervousSystem:
             progress_control = directive.source == "local-progress-stall" and directive.control in BLOCKING_CONTROLS
             environment_control = directive.source == "local-environment-thrash" and directive.control in BLOCKING_CONTROLS
             mutation = tool_kind(tool_name, args) == "mutation"
-            relevant_mutation = mutation_is_relevant(tool_name, args, state.requested_paths) if mutation else False
+            board_mutation = bool(board_mutation_kind(tool_name))
+            relevant_mutation = (
+                board_mutation
+                or (mutation_is_relevant(tool_name, args, state.requested_paths) if mutation else False)
+            )
             if not directive.delivered:
                 directive.delivered = True
                 self._metrics["controls_delivered"] += 1
@@ -1577,10 +1624,62 @@ class NervousSystem:
         changed_paths_present = "changed_paths" in kwargs
         changed_paths = list(kwargs.get("changed_paths") or [])
         coding_change = state.change_required and (bool(kwargs.get("coding")) or changed_paths_present)
+        if state.change_required and not state.requested_paths:
+            # Empty composition is a composition failure, not idleness: when the
+            # prompt named no change target, no mutation can be judged
+            # task-relevant. Fail closed with a distinct diagnostic and never
+            # let the turn pass for lack of a target (t_ac8ba462).
+            with self._lock:
+                issue = not state.composition_diagnostic_issued
+                if issue:
+                    state.composition_diagnostic_issued = True
+                    self._metrics["progress_composition_empty_prevented"] += 1
+            if issue:
+                diagnostic = list(state.composition_diagnostic)
+                prompt_sha256 = (
+                    str(diagnostic[0].get("line_sha256") or "")
+                    if diagnostic else state.user_message_hash
+                )
+                self._log("gate_composition_empty", {
+                    "turn_id": state.turn_id,
+                    "session_id": state.session_id,
+                    "reason": "requested_paths composed empty for a change-required prompt",
+                    "attempted_composition": [],
+                    "token_source": diagnostic,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_hash": state.user_message_hash,
+                    "tool_actions": state.tool_actions,
+                    "mutation_attempts": state.mutation_attempts,
+                    "relevant_mutation_attempts": state.relevant_mutation_attempts,
+                    "shadow": self._config.mode == "shadow",
+                })
+            if self._config.mode == "shadow":
+                with self._lock:
+                    self._metrics["progress_completion_block_shadowed"] += 1
+                return None
+            return {
+                "action": "continue",
+                "message": (
+                    "Nerve completion integrity check (gate_composition_empty): this task statement named no "
+                    "change target, so no mutation can be judged task-relevant. Do not claim completion. State "
+                    "the concrete target this turn must change (file path, card id, or the board) so the gate "
+                    "can verify it."
+                ),
+            }
         relevant_persisted = changed_paths_relevant(changed_paths, state.requested_paths) if changed_paths_present else None
         with self._lock:
             no_relevant_attempt = coding_change and state.relevant_mutation_attempts == 0
-            no_relevant_persisted = coding_change and relevant_persisted is False
+            # Verified board writes (create/comment read back from kanban.db, this
+            # profile, inside the turn window) are the work product of an
+            # orchestrator turn. The harness reports changed_paths from file edits
+            # only, so a board-only turn can never show a matching file; without
+            # this guard the gate re-blocks work it already credited (t_ac8ba462).
+            # Branch 1 above is untouched: zero credit and zero relevant attempts
+            # still block, so the idleness guard keeps its original purpose.
+            board_progress = state.board_mutations_credited > 0
+            no_relevant_persisted = (
+                coding_change and relevant_persisted is False and not board_progress
+            )
             missing_verification = (
                 coding_change and state.verification_required and state.verified_test_passes == 0
             )
@@ -1601,6 +1700,13 @@ class NervousSystem:
                 "relevant_mutation_attempts": state.relevant_mutation_attempts,
                 "verified_test_passes": state.verified_test_passes,
                 "requested_paths": list(state.requested_paths),
+                "token_source": list(state.requested_path_sources),
+                "composition": {
+                    "empty": not state.requested_paths,
+                    "path_count": len(state.requested_paths),
+                    "prompt_hash": state.user_message_hash,
+                },
+                "board_mutations_credited": state.board_mutations_credited,
                 "changed_paths": changed_paths,
                 "reason": reason,
                 "shadow": self._config.mode == "shadow",

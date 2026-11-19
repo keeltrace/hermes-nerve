@@ -6,11 +6,15 @@ with task-relative progress.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shlex
+import sqlite3
 import subprocess
+import time
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -36,7 +40,40 @@ _NOUN_CHANGE_RE = re.compile(
 )
 CHANGE_REQUIRED_RE = re.compile(rf"\b(?:{_CHANGE_WORDS})\b", re.IGNORECASE)
 VERIFY_REQUIRED_RE = re.compile(r"\b(?:test|tests|verify|verification|regression|check)\b", re.IGNORECASE)
-PATH_RE = re.compile(r"(?<![\w.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9]{1,12})(?![\w.-])")
+# Path-like tokens only: a slash-qualified path with a letter-led extension, or a
+# bare filename with a known code/doc extension. Bare dotted identifiers extracted
+# from quoted script text ("urllib.request", "json.load", "1..8") are not paths —
+# the old greedy form made every real mutation look irrelevant (completion-gate loop).
+_SAFE_EXTS = (
+    r"py|sh|bash|rb|go|rs|java|c|cpp|h|js|jsx|ts|tsx|md|json|ya?ml|txt|toml|cfg|ini|"
+    r"log|db|sqlite|sql|csv|tsv|html?|css|scss|env|xml|lock|conf|service|timer|pdf|"
+    r"svg|png|jpe?g|tar|gz|tgz|zip"
+)
+PATH_RE = re.compile(
+    r"(?<![\w.-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]{1,11}"
+    r"|[A-Za-z0-9_-]+\.(?:" + _SAFE_EXTS + r"))(?![\w.-])"
+)
+
+# Orchestrator prompts often name no source file at all: they name the board
+# (a card id or kanban.db) or an absolute working directory (a cron job's output
+# dir). Those are real change targets. Without them composition is empty and the
+# progress gate misreads board-only work as idleness (t_ac8ba462).
+BOARD_TARGET = "kanban.db"
+CARD_ID_RE = re.compile(r"(?<![\w-])t_[0-9a-z]{6,16}(?![\w-])")
+BOARD_DB_RE = re.compile(r"(?<![\w./-])kanban\.db(?![\w.-])", re.IGNORECASE)
+# Absolute directory token (two or more segments, trailing slash). File tokens
+# are already handled by PATH_RE; this only adds directories.
+ABS_DIR_RE = re.compile(r"(?<![\w.-])(/(?:[A-Za-z0-9_.-]+/){2,})(?![\w./-])")
+
+# Board writes that are the work product of an orchestrator turn. Only writes
+# whose row can be read back are credited; lifecycle calls that end the turn's
+# own card (complete/block/request_review/...) are deliberately excluded so a
+# turn cannot self-certify progress it never made.
+BOARD_MUTATION_TOOLS: dict[str, str] = {
+    "kanban_create": "create",
+    "kanban_comment": "comment",
+}
+_BOARD_WINDOW_SKEW_SECONDS = 120.0
 
 # Harness-supplied instruction files (Paperclip agent instructions, wake payloads,
 # execution contracts) are not a task statement. Deriving "this turn must change
@@ -257,6 +294,28 @@ def verification_required(user_message: str) -> bool:
     return bool(VERIFY_REQUIRED_RE.search(message))
 
 
+def is_input_attachment(path: str) -> bool:
+    """An uploaded file the user SENT is an input, never a requested output.
+
+    Screenshots, voice memos and pasted documents land under the harness cache
+    (`opt/data/cache/documents/native-inputs/<sha>/img_<sha>.png`). They arrive
+    in the task text as an absolute path, so PATH_RE picks them up and — once a
+    turn is judged to require a code change — the completion gate demands a
+    mutation to the attachment itself. There is nothing to change in a PNG, so
+    the turn can never satisfy the gate and blocks forever.
+
+    The image/document IS the task statement; the change belongs in the code it
+    describes. Same rationale as HARNESS_INSTRUCTION_MARKERS, applied to files
+    rather than text.
+    """
+    normalized = _normalize_path(path).casefold().lstrip("/")
+    if not normalized:
+        return False
+    if "native-inputs/" in normalized:
+        return True
+    return normalized.startswith("opt/data/cache/documents/")
+
+
 def is_harness_path(path: str) -> bool:
     """Harness-internal paths are never legitimate change targets for a task."""
     normalized = _normalize_path(path).casefold().lstrip("/")
@@ -281,8 +340,23 @@ def looks_like_api_field(path: str) -> bool:
     return any(CAMEL_CASE_SEGMENT_RE.match(part) for part in normalized.split("."))
 
 
-def requested_paths(user_message: str) -> tuple[str, ...]:
-    seen: list[str] = []
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(str(value or "").encode("utf-8", "replace")).hexdigest()
+
+
+@dataclass(frozen=True)
+class PathComposition:
+    """Change targets a prompt names, plus hashed provenance per target."""
+
+    paths: tuple[str, ...]
+    sources: tuple[dict[str, Any], ...]
+
+    def __bool__(self) -> bool:
+        return bool(self.paths)
+
+
+def _strip_transport_envelopes(user_message: str) -> str:
+    """Drop transport-envelope lines and URLs before extracting targets."""
     cleaned = str(user_message or "")
     # Uploaded instruction documents are inputs, not output edit targets.
     # Strip only transport-envelope lines; keep explicit paths in the task body.
@@ -292,6 +366,34 @@ def requested_paths(user_message: str) -> tuple[str, ...]:
         cleaned = re.sub(r"(?m)^\[Content of [^\r\n]*\]:\r?$", "", cleaned)
     cleaned = re.sub(r"@?url:[^\s]+", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"https?://[^\s`]+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def compose_requested_paths(user_message: str) -> PathComposition:
+    """Compose the change targets a prompt names, with hashed provenance.
+
+    File tokens keep the original extraction rules. Beyond them, a prompt that
+    names a card id, ``kanban.db`` or an absolute directory asks for real work
+    on a target the filesystem-only extractor cannot see. Composition must see
+    those targets or a board-only orchestrator turn reads as idleness.
+    """
+    seen: list[str] = []
+    sources: list[dict[str, Any]] = []
+    cleaned = _strip_transport_envelopes(user_message)
+    lines = cleaned.splitlines() or [cleaned]
+
+    def add(path: str, rule: str, line_index: int) -> None:
+        if not path or path in seen or len(seen) >= 32:
+            return
+        line = lines[line_index] if 0 <= line_index < len(lines) else ""
+        seen.append(path)
+        sources.append({
+            "path": path,
+            "rule": rule,
+            "line_index": line_index,
+            "line_sha256": _sha256_text(line),
+        })
+
     for match in PATH_RE.finditer(cleaned):
         raw = match.group(1)
         if re.fullmatch(r"v?\d+(?:\.\d+)+", raw, flags=re.IGNORECASE):
@@ -312,9 +414,78 @@ def requested_paths(user_message: str) -> tuple[str, ...]:
         source_name = r"[A-Za-z0-9_-]+\.(?:py|js|ts|tsx|jsx|rs|go|java|c|cpp|h)"
         candidates = parts if len(parts) > 1 and all(re.fullmatch(source_name, p) for p in parts) else [path]
         for candidate in candidates:
-            if candidate and not is_harness_path(candidate) and not looks_like_api_field(candidate) and candidate not in seen:
-                seen.append(candidate)
-    return tuple(seen[:32])
+            if candidate == BOARD_TARGET:
+                # Bare kanban.db is a board target, labelled by the board rule
+                # below, not a source file this turn edits.
+                continue
+            if (
+                candidate
+                and not is_harness_path(candidate)
+                and not is_input_attachment(candidate)
+                and not looks_like_api_field(candidate)
+                and candidate not in seen
+            ):
+                add(candidate, "path_token", cleaned.count("\n", 0, match.start()))
+    for index, line in enumerate(lines):
+        if BOARD_DB_RE.search(line):
+            add(BOARD_TARGET, "board_db", index)
+        if CARD_ID_RE.search(line):
+            add(BOARD_TARGET, "card_id", index)
+        for dir_match in ABS_DIR_RE.finditer(line):
+            candidate = _normalize_path(dir_match.group(1).rstrip("/"))
+            if candidate and not is_harness_path(candidate) and not is_input_attachment(candidate):
+                add(candidate, "abs_dir", index)
+    return PathComposition(paths=tuple(seen[:32]), sources=tuple(sources[:32]))
+
+
+def requested_paths(user_message: str) -> tuple[str, ...]:
+    return compose_requested_paths(user_message).paths
+
+
+def composition_diagnostic(
+    user_message: str, *, max_lines: int = 400, max_entries: int = 12,
+) -> tuple[dict[str, Any], ...]:
+    """Hashed provenance for a prompt that composed no change target.
+
+    Never carries raw prompt text: the whole prompt and every candidate line are
+    named by sha256 plus a line index, and rejected tokens are hashed too. An
+    operator can identify a line by hashing it; a secret in the prompt cannot be
+    read back out of the shared event log.
+    """
+    text = str(user_message or "")
+    raw_lines = text.splitlines() or [text]
+    entries: list[dict[str, Any]] = [{
+        "rule": "prompt_text",
+        "line_index": None,
+        "line_sha256": _sha256_text(text),
+        "chars": len(text),
+        "line_count": len(raw_lines),
+    }]
+    for index, line in enumerate(raw_lines[:max_lines]):
+        candidates: list[dict[str, Any]] = []
+        for rule, pattern in (
+            ("path_token", PATH_RE), ("card_id", CARD_ID_RE),
+            ("board_db", BOARD_DB_RE), ("abs_dir", ABS_DIR_RE),
+        ):
+            for match in pattern.finditer(line):
+                token = match.group(1) if match.groups() else match.group(0)
+                candidates.append({
+                    "rule": rule,
+                    "token_sha256": _sha256_text(token),
+                    "token_chars": len(token),
+                })
+                if len(candidates) >= 6:
+                    break
+        if candidates:
+            entries.append({
+                "rule": "candidate_line",
+                "line_index": index,
+                "line_sha256": _sha256_text(line),
+                "candidates": candidates[:6],
+            })
+            if len(entries) >= max_entries:
+                break
+    return tuple(entries)
 
 
 def _shell_segments(command: str) -> list[str]:
@@ -530,7 +701,9 @@ def mutation_is_relevant(tool_name: str, args: dict[str, Any] | None, requested:
     paths = mutation_paths(tool_name, args)
     if not paths:
         # A concrete mutation with no inspectable path is allowed but does not
-        # prove semantic progress when the task names target files.
+        # prove semantic progress when the task names target files. When the
+        # task names no target, the completion gate reports
+        # gate_composition_empty and fails closed (t_ac8ba462).
         return not requested
     if requested:
         for path in paths:
@@ -636,3 +809,180 @@ def _looks_like_scratch(path: str) -> bool:
         return check.returncode != 0
     except (OSError, subprocess.TimeoutExpired):
         return True
+
+
+# ---------------------------------------------------------------------------
+# Board-write relevance: orchestrator turns write cards, not files.
+# ---------------------------------------------------------------------------
+
+def board_mutation_kind(tool_name: str) -> str:
+    """Classify a kanban tool call that mutates the board, else ''."""
+    return BOARD_MUTATION_TOOLS.get(str(tool_name or "").strip().lower(), "")
+
+
+def current_profile_name() -> str:
+    """The profile this turn acts as: HERMES_PROFILE, else the home path."""
+    explicit = os.getenv("HERMES_PROFILE", "").strip()
+    try:
+        from .paths import hermes_home
+        home = hermes_home()
+    except Exception:
+        return explicit or "default"
+    if home.parent.name == "profiles":
+        return home.name
+    return explicit or "default"
+
+
+def _kanban_db_path() -> Path | None:
+    env = os.getenv("HERMES_KANBAN_DB", "").strip()
+    candidates: list[Path] = [Path(env)] if env else []
+    try:
+        from .paths import default_hermes_root, hermes_home
+        candidates.append(hermes_home() / "kanban.db")
+        candidates.append(default_hermes_root() / "kanban.db")
+    except Exception:
+        pass
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _result_task_id(result: str) -> str:
+    try:
+        payload = json.loads(result) if result else {}
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("task_id", "id"):
+        value = str(payload.get(key) or "").strip()
+        if value.startswith("t_"):
+            return value
+    return ""
+
+
+def _same_actor(left: str, right: str) -> bool:
+    return str(left or "").strip().casefold() == str(right or "").strip().casefold()
+
+
+def verify_board_mutation(
+    kind: str,
+    args: dict[str, Any] | None,
+    result: str = "",
+    *,
+    profile: str = "",
+    current_task: str = "",
+    started_wall: float = 0.0,
+    now: float | None = None,
+    db_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Read the board back and return credit evidence for a real board write.
+
+    Credit requires the row to exist, to match the call's own content, to be
+    authored by THIS profile, and to fall inside the turn's wall-clock window.
+    Unrelated or failed writes return None: a call is not a write, and an
+    unrelated comment is not task-relevant progress.
+    """
+    args = args or {}
+    if not kind:
+        return None
+    now = time.time() if now is None else now
+    db = db_path or _kanban_db_path()
+    if db is None:
+        return None
+    since = float(started_wall or now) - _BOARD_WINDOW_SKEW_SECONDS
+    until = now + _BOARD_WINDOW_SKEW_SECONDS
+    actor = str(profile or "").strip()
+    current = str(current_task or "").strip()
+    try:
+        con = sqlite3.connect(f"file:{Path(db)}?mode=ro", uri=True, timeout=0.5)
+        con.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return None
+    try:
+        if kind == "create":
+            title = str(args.get("title") or "").strip()
+            row = None
+            task_id = _result_task_id(result)
+            if task_id:
+                row = con.execute(
+                    "select id, title, assignee, status, created_by, created_at from tasks where id = ?",
+                    (task_id,),
+                ).fetchone()
+            if row is None and title:
+                row = con.execute(
+                    "select id, title, assignee, status, created_by, created_at from tasks "
+                    "where title = ? and created_at >= ? order by created_at desc limit 1",
+                    (title, since),
+                ).fetchone()
+            if row is None:
+                return None
+            created_at = float(row["created_at"] or 0)
+            if not (since <= created_at <= until):
+                return None
+            if title and str(row["title"] or "").strip() != title:
+                return None
+            if actor and not _same_actor(row["created_by"], actor):
+                return None
+            parents = [str(p) for p in (args.get("parents") or []) if isinstance(p, str)]
+            scope = (
+                "lineage" if current and current in parents
+                else ("created-card" if current else "orchestrator-window")
+            )
+            return {
+                "mutation": "create",
+                "table": "tasks",
+                "row_id": str(row["id"]),
+                "task_id": str(row["id"]),
+                "actor": str(row["created_by"] or ""),
+                "scope": scope,
+                "created_at": created_at,
+                "content_sha256": _sha256_text(title),
+                "verified": True,
+            }
+        if kind == "comment":
+            task_id = str(args.get("task_id") or "").strip() or _result_task_id(result)
+            body = str(args.get("body") or "")
+            if not task_id or not body:
+                return None
+            rows = con.execute(
+                "select id, task_id, author, body, created_at from task_comments "
+                "where task_id = ? order by id desc limit 25",
+                (task_id,),
+            ).fetchall()
+            for row in rows:
+                created_at = float(row["created_at"] or 0)
+                if not (since <= created_at <= until):
+                    continue
+                if str(row["body"] or "") != body:
+                    continue
+                if actor and not _same_actor(row["author"], actor):
+                    continue
+                scope = (
+                    "current-task" if current and task_id == current
+                    else ("cross-card" if current else "orchestrator-window")
+                )
+                return {
+                    "mutation": "comment",
+                    "table": "task_comments",
+                    "row_id": str(row["id"]),
+                    "task_id": str(task_id),
+                    "actor": str(row["author"] or ""),
+                    "scope": scope,
+                    "created_at": created_at,
+                    "content_sha256": _sha256_text(body),
+                    "verified": True,
+                }
+            return None
+    except sqlite3.Error:
+        return None
+    finally:
+        try:
+            con.close()
+        except sqlite3.Error:
+            pass
+    return None
