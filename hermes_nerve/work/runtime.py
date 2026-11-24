@@ -165,8 +165,16 @@ def supervisor() -> CardSupervisor:
     with _LOCK:
         if not _enabled:
             raise RuntimeError("work supervision is disabled")
+        existing = _supervisor
+    if existing is not None:
+        return existing
+    # Construct outside the module lock: building the store opens SQLite and
+    # may wait on another writer's lock. Holding _LOCK across that used to
+    # stall every other thread calling settings()/enabled() behind it.
+    built = CardSupervisor()
+    with _LOCK:
         if _supervisor is None:
-            _supervisor = CardSupervisor()
+            _supervisor = built
         return _supervisor
 
 

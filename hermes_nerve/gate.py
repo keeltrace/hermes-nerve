@@ -35,6 +35,7 @@ import math
 import os
 import re
 import shlex
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -994,6 +995,91 @@ def _make_client(**kwargs):
     return JevClient(**kwargs)
 
 
+# Hermes runs this composite chain as ONE hook callback with a wall-clock
+# budget (``plugins.hook_callback_budgets.pre_tool_call.pre_tool_control``,
+# 8.0s on the fleet box). A callback that overruns it is ABANDONED and the
+# whole chain is suppressed for 60s: every tool call in every session is then
+# refused with "plugin callback timed out or is still running". Supervision
+# store writes used to block on a contended SQLite BEGIN IMMEDIATE for up to
+# 30s (busy_timeout), which is exactly that failure. Bound each callback here
+# so the chain can never hand Hermes an overrun, whatever an inner callback
+# does.
+_PRETOOL_CHAIN_BUDGET_MS = 7000.0
+_PRETOOL_ADVISORY_BUDGET_MS = 2500.0
+_PRETOOL_CRITICAL_BUDGET_MS = 5000.0
+_LIFECYCLE_TOOLS = frozenset({"kanban_complete", "kanban_block"})
+
+# One in-flight run per advisory callback: a timed-out callback that is still
+# running must not be re-entered, or slow supervision becomes an unbounded
+# thread pile-up (the same reason Hermes skips abandoned hook workers).
+_ADVISORY_INFLIGHT: dict[str, threading.Thread] = {}
+_ADVISORY_INFLIGHT_LOCK = threading.Lock()
+
+
+def _pretool_budget_ms(var: str, default: float) -> float:
+    try:
+        raw = float(os.getenv(var, "") or default)
+    except ValueError:
+        raw = default
+    return max(1.0, min(raw, 30000.0))
+
+
+def _invoke_bounded(callback, kwargs: dict[str, Any], timeout_s: float) -> tuple[Any, str, bool]:
+    """Run one hook callback, returning (directive, outcome, timed_out).
+
+    The callback runs on a daemon thread so a blocked read/write can never
+    hold the chain past ``timeout_s``. Exceptions are re-raised on the calling
+    thread so the chain's existing failure policy still applies.
+    """
+    box: dict[str, Any] = {}
+    done = threading.Event()
+
+    def _runner() -> None:
+        try:
+            box["directive"] = callback(**kwargs)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller
+            box["error"] = exc
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=_runner, name="nerve-pretool-callback", daemon=True)
+    worker.start()
+    if not done.wait(max(0.0, float(timeout_s))):
+        return None, "timeout", True
+    if "error" in box:
+        raise box["error"]
+    directive = box.get("directive")
+    return directive, ("none" if directive is None else "directive"), False
+
+
+def _invoke_advisory(name: str, callback, kwargs: dict[str, Any], timeout_s: float) -> tuple[Any, str, bool]:
+    """Bounded advisory invocation with a single in-flight run per callback."""
+    with _ADVISORY_INFLIGHT_LOCK:
+        running = _ADVISORY_INFLIGHT.get(name)
+        if running is not None and running.is_alive():
+            return None, "timeout:still_running", True
+        box_done = threading.Event()
+        box: dict[str, Any] = {}
+
+        def _runner() -> None:
+            try:
+                box["directive"] = callback(**kwargs)
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the caller
+                box["error"] = exc
+            finally:
+                box_done.set()
+
+        worker = threading.Thread(target=_runner, name=f"nerve-pretool-{name}"[:32], daemon=True)
+        _ADVISORY_INFLIGHT[name] = worker
+        worker.start()
+    if not box_done.wait(max(0.0, float(timeout_s))):
+        return None, "timeout", True
+    if "error" in box:
+        raise box["error"]
+    directive = box.get("directive")
+    return directive, ("none" if directive is None else "directive"), False
+
+
 def instrument_pre_tool_chain(callbacks, sink):
     """Wrap pre_tool_call callbacks with per-callback timing and failure policy.
 
@@ -1025,13 +1111,35 @@ def instrument_pre_tool_chain(callbacks, sink):
     def pre_tool_control(*args, **kwargs):
         kwargs = args[0] if args else kwargs
         chain_start = time.monotonic()
+        deadline = chain_start + (
+            _pretool_budget_ms("NERVE_PRETOOL_CHAIN_BUDGET_MS", _PRETOOL_CHAIN_BUDGET_MS) / 1000.0
+        )
+        tool_name = str(kwargs.get("tool_name") or "")
         for name, callback, critical in normalized:
             t0 = time.monotonic()
+            remaining_ms = max(0.0, (deadline - t0) * 1000.0)
+            budget_ms = min(
+                _pretool_budget_ms(
+                    "NERVE_PRETOOL_CRITICAL_BUDGET_MS" if critical else "NERVE_PRETOOL_ADVISORY_BUDGET_MS",
+                    _PRETOOL_CRITICAL_BUDGET_MS if critical else _PRETOOL_ADVISORY_BUDGET_MS,
+                ),
+                remaining_ms,
+            )
             outcome = "none"
             directive = None
+            timed_out = False
             try:
-                directive = callback(**kwargs)
-                outcome = "none" if directive is None else "directive"
+                if budget_ms < 1.0:
+                    # The chain deadline is already spent: do not start work
+                    # that cannot finish inside Hermes' callback budget.
+                    outcome = "timeout:chain_budget_exhausted"
+                    timed_out = True
+                elif critical:
+                    directive, outcome, timed_out = _invoke_bounded(callback, kwargs, budget_ms / 1000.0)
+                else:
+                    directive, outcome, timed_out = _invoke_advisory(
+                        str(name), callback, kwargs, budget_ms / 1000.0
+                    )
             except Exception as exc:
                 outcome = f"exception:{type(exc).__name__}"
             duration_ms = round((time.monotonic() - t0) * 1000.0, 1)
@@ -1042,7 +1150,8 @@ def instrument_pre_tool_chain(callbacks, sink):
                     "duration_ms": duration_ms,
                     "outcome": outcome,
                     "critical": critical,
-                    "tool_name": str(kwargs.get("tool_name") or "")[:64],
+                    "budget_ms": round(budget_ms, 1),
+                    "tool_name": tool_name[:64],
                     "session_id": str(kwargs.get("session_id") or "")[:64],
                     "tool_call_id": str(kwargs.get("tool_call_id") or "")[:64],
                     "chain_elapsed_ms": round((time.monotonic() - chain_start) * 1000.0, 1),
@@ -1051,7 +1160,20 @@ def instrument_pre_tool_chain(callbacks, sink):
                 pass  # telemetry must never break the control chain
             if directive is not None:
                 return directive
-            if outcome.startswith("exception") and critical:
+            if timed_out and not critical and tool_name in _LIFECYCLE_TOOLS:
+                # Supervision could not verify a lifecycle transition inside
+                # the budget: never let the transition through unverified.
+                # Ordinary tools continue (advisory), lifecycle does not.
+                return {
+                    "action": "block",
+                    "message": (
+                        f"Nerve supervision did not finish within its {round(budget_ms)}ms budget, "
+                        f"so this {tool_name} could not be verified. The work is likely still "
+                        "running server-side; retry the call in a few seconds."
+                    ),
+                    "source": "nerve-pretool-budget",
+                }
+            if (timed_out and critical) or (outcome.startswith("exception") and critical):
                 # Security-critical callback failed before producing a
                 # verdict: do not permit. Fail to the native human approval
                 # boundary with an honest reason (never a silent allow).
