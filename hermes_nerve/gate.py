@@ -1009,11 +1009,28 @@ _PRETOOL_ADVISORY_BUDGET_MS = 2500.0
 _PRETOOL_CRITICAL_BUDGET_MS = 5000.0
 _LIFECYCLE_TOOLS = frozenset({"kanban_complete", "kanban_block"})
 
-# One in-flight run per advisory callback: a timed-out callback that is still
-# running must not be re-entered, or slow supervision becomes an unbounded
-# thread pile-up (the same reason Hermes skips abandoned hook workers).
-_ADVISORY_INFLIGHT: dict[str, threading.Thread] = {}
+# One in-flight run per (advisory callback, calling session): a timed-out
+# callback that is still running must not be re-entered by the SAME session,
+# or slow supervision becomes an unbounded thread pile-up (the same reason
+# Hermes skips abandoned hook workers). Keyed per session on purpose — a
+# gateway process serves many sessions and each hook call arrives on its own
+# worker, so a run belonging to session A must never suppress session B's
+# supervision (that would drop B's fences and false-block B's lifecycle
+# transitions with a budget it never spent).
+_ADVISORY_INFLIGHT: dict[tuple[str, str], threading.Thread] = {}
 _ADVISORY_INFLIGHT_LOCK = threading.Lock()
+
+
+def _advisory_inflight_key(name: str, kwargs: dict[str, Any]) -> tuple[str, str]:
+    """Invocation identity for the single-flight guard.
+
+    Session id is the caller identity Hermes gives every hook invocation; the
+    task id is a fallback for callers that do not pass one. Empty scope (no
+    session and no task) keeps the old conservative behaviour: all anonymous
+    invocations of one callback share a bucket.
+    """
+    scope = str(kwargs.get("session_id") or kwargs.get("task_id") or "")[:64]
+    return (str(name), scope)
 
 
 def _pretool_budget_ms(var: str, default: float) -> float:
@@ -1053,9 +1070,14 @@ def _invoke_bounded(callback, kwargs: dict[str, Any], timeout_s: float) -> tuple
 
 
 def _invoke_advisory(name: str, callback, kwargs: dict[str, Any], timeout_s: float) -> tuple[Any, str, bool]:
-    """Bounded advisory invocation with a single in-flight run per callback."""
+    """Bounded advisory invocation with a single in-flight run per session."""
+    key = _advisory_inflight_key(name, kwargs)
     with _ADVISORY_INFLIGHT_LOCK:
-        running = _ADVISORY_INFLIGHT.get(name)
+        # Prune finished runs: a long-lived gateway serves many sessions, and
+        # stale entries must not accumulate (or be mistaken for live work).
+        for stale in [k for k, th in _ADVISORY_INFLIGHT.items() if not th.is_alive()]:
+            _ADVISORY_INFLIGHT.pop(stale, None)
+        running = _ADVISORY_INFLIGHT.get(key)
         if running is not None and running.is_alive():
             return None, "timeout:still_running", True
         box_done = threading.Event()
@@ -1070,7 +1092,7 @@ def _invoke_advisory(name: str, callback, kwargs: dict[str, Any], timeout_s: flo
                 box_done.set()
 
         worker = threading.Thread(target=_runner, name=f"nerve-pretool-{name}"[:32], daemon=True)
-        _ADVISORY_INFLIGHT[name] = worker
+        _ADVISORY_INFLIGHT[key] = worker
         worker.start()
     if not box_done.wait(max(0.0, float(timeout_s))):
         return None, "timeout", True
@@ -1161,9 +1183,22 @@ def instrument_pre_tool_chain(callbacks, sink):
             if directive is not None:
                 return directive
             if timed_out and not critical and tool_name in _LIFECYCLE_TOOLS:
-                # Supervision could not verify a lifecycle transition inside
-                # the budget: never let the transition through unverified.
-                # Ordinary tools continue (advisory), lifecycle does not.
+                # Supervision could not verify a lifecycle transition: never
+                # let the transition through unverified. Ordinary tools
+                # continue (advisory), lifecycle does not.
+                if outcome == "timeout:still_running":
+                    # This session's earlier supervision run is still alive,
+                    # so THIS call's callback was never started. Never claim a
+                    # budget it did not spend.
+                    return {
+                        "action": "block",
+                        "message": (
+                            "Nerve supervision for this session is still finishing an earlier "
+                            f"call, so this {tool_name} could not be verified. Retry once that "
+                            "run completes (usually a few seconds)."
+                        ),
+                        "source": "nerve-pretool-still-running",
+                    }
                 return {
                     "action": "block",
                     "message": (
