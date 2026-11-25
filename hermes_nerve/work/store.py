@@ -25,29 +25,56 @@ class SupervisionStore:
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self.diagnostics_dropped = 0
+        self._configure_journal()
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _configure_journal(self) -> None:
+        """Set WAL once per database file, not on every connection.
+
+        ``PRAGMA journal_mode=WAL`` needs a lock upgrade; running it on every
+        connection (including read-only ones) used to make a contended store
+        stall callers for the whole busy timeout. WAL is persistent, so one
+        attempt at construction is enough.
+        """
         con = sqlite3.connect(str(self.path), timeout=30.0)
+        try:
+            con.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            pass
+        finally:
+            con.close()
+
+    def _connect(self, timeout_ms: int = 30000) -> sqlite3.Connection:
+        timeout_ms = max(1, int(timeout_ms))
+        con = sqlite3.connect(str(self.path), timeout=timeout_ms / 1000.0)
         con.row_factory = sqlite3.Row
-        con.execute("PRAGMA journal_mode=WAL")
+        con.execute(f"PRAGMA busy_timeout={timeout_ms}")
         con.execute("PRAGMA foreign_keys=ON")
-        con.execute("PRAGMA busy_timeout=30000")
         return con
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        with self._lock:
-            con = self._connect()
-            try:
-                con.execute("BEGIN IMMEDIATE")
-                yield con
-                con.commit()
-            except Exception:
+    def transaction(self, timeout_ms: int = 30000) -> Iterator[sqlite3.Connection]:
+        timeout_ms = max(1, int(timeout_ms))
+        if not self._lock.acquire(timeout=timeout_ms / 1000.0):
+            # Bounded like the SQLite busy timeout: a caller that asked for a
+            # short lease (diagnostics on the tool hot path) must not queue
+            # behind another thread's long write.
+            raise sqlite3.OperationalError("supervision store busy")
+        con: sqlite3.Connection | None = None
+        try:
+            con = self._connect(timeout_ms=timeout_ms)
+            con.execute("BEGIN IMMEDIATE")
+            yield con
+            con.commit()
+        except Exception:
+            if con is not None:
                 con.rollback()
-                raise
-            finally:
+            raise
+        finally:
+            if con is not None:
                 con.close()
+            self._lock.release()
 
     @contextmanager
     def read(self) -> Iterator[sqlite3.Connection]:
@@ -751,9 +778,19 @@ class SupervisionStore:
                 data["payload"] = {}
             return data
 
-    def add_diagnostic(self, *, task_id: str = "", run_id: int | None = None, kind: str, payload: dict[str, Any], created_at: str) -> None:
-        with self.transaction() as con:
-            con.execute(
-                "INSERT INTO supervision_diagnostics(task_id,run_id,kind,payload_json,created_at) VALUES(?,?,?,?,?)",
-                (str(task_id or ""), int(run_id) if run_id is not None else None, str(kind), json.dumps(payload, sort_keys=True, default=str), str(created_at)),
-            )
+    def add_diagnostic(self, *, task_id: str = "", run_id: int | None = None, kind: str, payload: dict[str, Any], created_at: str, timeout_ms: int = 250) -> None:
+        """Record advisory telemetry without ever stalling the caller.
+
+        ``add_diagnostic`` runs on the ``pre_tool_call`` hot path, where a
+        blocked SQLite write used to hold the callback past Hermes' budget and
+        wedge every tool call. A contended store now drops the record (counted
+        in ``diagnostics_dropped``) instead of queueing for 30s.
+        """
+        try:
+            with self.transaction(timeout_ms=timeout_ms) as con:
+                con.execute(
+                    "INSERT INTO supervision_diagnostics(task_id,run_id,kind,payload_json,created_at) VALUES(?,?,?,?,?)",
+                    (str(task_id or ""), int(run_id) if run_id is not None else None, str(kind), json.dumps(payload, sort_keys=True, default=str), str(created_at)),
+                )
+        except sqlite3.OperationalError:
+            self.diagnostics_dropped += 1

@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,52 @@ from collections.abc import Mapping
 from .models import RunIdentity, utc_now
 from .nerve import budget_criterion, estimate_task_budget
 from .runtime import settings
+
+# ``ensure_kanban_binding`` runs on EVERY tool call (pre_tool_call hot path).
+# A session whose effective task id is not a Kanban card used to write one
+# ``autobind_task_missing`` row per tool call — 168k rows / a 117MB store on
+# the fleet box, each an fsynced BEGIN IMMEDIATE that can block behind another
+# writer. Repeat telemetry is deduped per process and negative lookups are
+# memoised briefly, so the hot path costs no write and no Kanban read.
+_DIAG_ONCE_LOCK = threading.Lock()
+_DIAG_ONCE: dict[tuple[str, str], float] = {}
+_DIAG_ONCE_TTL_S = 3600.0
+_MISS_CACHE_LOCK = threading.Lock()
+_MISS_CACHE: dict[tuple[str, str, str], float] = {}
+_MISS_CACHE_TTL_S = 30.0
+
+
+def _diag_once(supervisor, *, task_id: str, kind: str, payload: dict[str, Any] | None = None,
+               run_id: int | None = None) -> None:
+    key = (str(task_id or ""), str(kind))
+    now = time.monotonic()
+    with _DIAG_ONCE_LOCK:
+        last = _DIAG_ONCE.get(key)
+        if last is not None and now - last < _DIAG_ONCE_TTL_S:
+            return
+        _DIAG_ONCE[key] = now
+    supervisor.store.add_diagnostic(
+        task_id=task_id, run_id=run_id, kind=kind,
+        payload=dict(payload or {}), created_at=utc_now(),
+    )
+
+
+def _miss_cached(task_id: str) -> bool:
+    key = (str(task_id or ""), str(os.getenv("HERMES_KANBAN_DB") or ""),
+           str(os.getenv("HERMES_KANBAN_BOARD") or ""))
+    now = time.monotonic()
+    with _MISS_CACHE_LOCK:
+        seen = _MISS_CACHE.get(key)
+        if seen is not None and now - seen < _MISS_CACHE_TTL_S:
+            return True
+    return False
+
+
+def _remember_miss(task_id: str) -> None:
+    key = (str(task_id or ""), str(os.getenv("HERMES_KANBAN_DB") or ""),
+           str(os.getenv("HERMES_KANBAN_BOARD") or ""))
+    with _MISS_CACHE_LOCK:
+        _MISS_CACHE[key] = time.monotonic()
 
 _DOD_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(definition\s+of\s+done|acceptance\s+criteria|done\s+criteria)\s*$", re.I)
 _ANY_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+")
@@ -191,8 +239,8 @@ def _worker_identity(contract_hash: str, *, task_id: str, session_id: str = "") 
 def _validate_canonical_scope(supervisor, *, task_id: str, task: Any, session_id: str = "") -> tuple[int, str, str | None] | None:
     scope = _raw_worker_scope(session_id=session_id)
     if scope is None:
-        supervisor.store.add_diagnostic(
-            task_id=task_id, kind="autobind_missing_run_identity", payload={}, created_at=utc_now(),
+        _diag_once(
+            supervisor, task_id=task_id, kind="autobind_missing_run_identity",
         )
         return None
     run_id, claim, worker = scope
@@ -238,16 +286,19 @@ def ensure_kanban_binding(supervisor, *, task_id: str = "", session_id: str = ""
     # Read and fence against canonical Kanban state before creating any Jev
     # contract. A stale/reclaimed worker must not be able to lock a DoD for a
     # run it no longer owns.
+    if _miss_cached(tid):
+        return None
     try:
         task = _load_canonical_task(tid)
     except Exception as exc:
-        supervisor.store.add_diagnostic(
-            task_id=tid, kind="autobind_task_lookup_failed",
-            payload={"error": f"{type(exc).__name__}: {exc}"}, created_at=utc_now(),
+        _diag_once(
+            supervisor, task_id=tid, kind="autobind_task_lookup_failed",
+            payload={"error": f"{type(exc).__name__}: {exc}"},
         )
         return None
     if task is None:
-        supervisor.store.add_diagnostic(task_id=tid, kind="autobind_task_missing", payload={}, created_at=utc_now())
+        _remember_miss(tid)
+        _diag_once(supervisor, task_id=tid, kind="autobind_task_missing")
         return None
     scope = _validate_canonical_scope(supervisor, task_id=tid, task=task, session_id=session_id)
     if scope is None:
@@ -275,9 +326,9 @@ def ensure_kanban_binding(supervisor, *, task_id: str = "", session_id: str = ""
         if criteria and bool(cfg.get("budget_dod_required", True)):
             criteria.append(budget_criterion(task_budget, tolerance=float(cfg.get("budget_dod_tolerance", 1.10))))
         if not criteria:
-            supervisor.store.add_diagnostic(
-                task_id=tid, run_id=run_id, kind="autobind_no_structured_dod",
-                payload={"title": str(_task_attr(task, "title", "") or "")}, created_at=utc_now(),
+            _diag_once(
+                supervisor, task_id=tid, run_id=run_id, kind="autobind_no_structured_dod",
+                payload={"title": str(_task_attr(task, "title", "") or "")},
             )
             return None
         out = supervisor.bind_contract(
